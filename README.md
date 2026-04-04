@@ -1,6 +1,6 @@
-# AGS Test
+# Hyprbobr
 
-A elegant design implementation for Hyprland featuring a comprehensive suite of notifications, tools, and UI components.
+An elegant design implementation for Hyprland featuring a comprehensive suite of notifications, tools, and UI components.
 
 ## Features
 
@@ -12,7 +12,7 @@ A elegant design implementation for Hyprland featuring a comprehensive suite of 
 ## Installation
 
 1. Clone the repository
-2. Install dependencies as specified in the project documentation
+2. Install dependencies as specified in the project documentation / What configurations exactly?
 3. Configure your Hyprland setup (see below)
 
 ## Hyprland Configuration

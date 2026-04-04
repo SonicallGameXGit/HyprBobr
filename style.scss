@@ -6,35 +6,43 @@ $bg-color: #00000066;
 $fg-color: #ffffffff;
 
 window.Bar {
-  background: $bg-color;
-  color: $fg-color;
-  font-size: 16px;
-  border-bottom: #3f3f3faa 2px solid;
-  border-radius: 8px;
+    background: $bg-color;
+    color: $fg-color;
+    font-size: 16px;
+    border-bottom: #aaaaaa66 2px solid;
+    border-radius: 8px;
 
-  > centerbox {
-    background: transparent;
-    padding: 6px 12px;
-  }
-
-  label {
-    font-family: 'Noto Sans';
-    font-weight: 500;
-  }
-
-  button {
-    background: transparent;
-    padding: 4px 8px;
-    border-radius: 4px;
-    transition: background 0.4s;
-
-    &:hover {
-      background: #ffffff44;
+    > centerbox {
+        background: transparent;
+        padding: 6px 12px;
     }
 
-    &:active {
-      background: #ffffff66;
-      transition: background 0.08s;
+    label {
+        font-family: "Noto Sans";
+        font-weight: 500;
     }
-  }
+
+    button {
+        background: transparent;
+        padding: 4px 8px;
+        border-radius: 4px;
+        transition: background 0.4s;
+
+        &:hover {
+            background: #ffffff44;
+        }
+
+        &:active {
+            background: #ffffff66;
+            transition: background 0.08s;
+        }
+    }
+}
+.notification {
+    background: $bg-color;
+    color: $fg-color;
+    border: #aaaaaa66 2px solid;
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 8px;
 }
