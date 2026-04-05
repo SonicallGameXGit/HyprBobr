@@ -72,16 +72,43 @@ button {
         font-weight: 600;
     }
 }
+.workspace-icon-stack {
+    min-width: 20px;
+    min-height: 20px;
+}
+.workspace-more-indicator {
+    margin-right: -2px;
+    margin-bottom: 2px;
+    opacity: 0.9;
+}
 .workspace-item-active {
     color: #ffffffff;
+    background: transparent;
+
+    &:hover {
+        background: transparent;
+        color: #ffffffff;
+    }
+
+    &:active {
+        background: transparent;
+    }
+
+    &:disabled {
+        opacity: 1;
+        background: transparent;
+        color: #ffffffff;
+    }
 }
 .workspace-bubble-layer {
     margin: 0;
 }
 .tray-item {
     padding: 0;
+    // min-width: 32px;
+    // min-height: 32px;
     min-width: 32px;
-    min-height: 32px;
+    min-height: 28px;
 }
 
 // Notifications
