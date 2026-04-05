@@ -33,16 +33,6 @@ button {
     background: transparent;
     padding: 6px;
 }
-.logo {
-    padding: 0;
-    > image {
-        border-radius: 4px;
-    }
-}
-.tray-item {
-    padding: 0;
-}
-
 .with-dividers {
     > * + * {
         border-left: 1px solid #aaaaaa66;
@@ -55,6 +45,20 @@ button {
         margin-left: 0;
         padding-left: 0;
     }
+}
+.logo {
+    padding: 0;
+    > image {
+        border-radius: 4px;
+    }
+}
+.workspace-active {
+    background: #ffffff44;
+}
+.tray-item {
+    padding: 0;
+    min-width: 32px;
+    min-height: 32px;
 }
 
 // Notifications
