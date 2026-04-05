@@ -18,7 +18,7 @@ button {
     background: transparent;
     padding: 4px 8px;
     border-radius: 4px;
-    transition: background 0.4s;
+    transition: background 0.24s, color 0.24s;
 
     &:hover {
         background: #ffffff44;
@@ -52,8 +52,31 @@ button {
         border-radius: 4px;
     }
 }
-.workspace-active {
-    background: #ffffff44;
+.workspace-item {
+    min-width: 14px;
+    min-height: 28px;
+    // padding: 6px 12px;
+    border-radius: 4px;
+    color: #ffffffb8;
+
+    &:hover {
+        background: #ffffff14;
+        color: #ffffffff;
+    }
+
+    &:active {
+        background: #ffffff1f;
+    }
+
+    > label {
+        font-weight: 600;
+    }
+}
+.workspace-item-active {
+    color: #ffffffff;
+}
+.workspace-bubble-layer {
+    margin: 0;
 }
 .tray-item {
     padding: 0;
