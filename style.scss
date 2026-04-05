@@ -2,42 +2,62 @@
 // $fg-color: #{"@theme_fg_color"};
 // $bg-color: #{"@theme_bg_color"};
 
-$bg-color: #00000066;
+$bg-color: #00000044;
+$bg-color-dark: #00000066;
 $fg-color: #ffffffff;
 
-window.Bar {
-    background: $bg-color;
+// Bar
+window {
+    background: linear-gradient(to bottom, $bg-color, $bg-color-dark);
     color: $fg-color;
     font-size: 16px;
     border-bottom: #aaaaaa66 2px solid;
     border-radius: 8px;
+}
+button {
+    background: transparent;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: background 0.4s;
 
-    > centerbox {
-        background: transparent;
-        padding: 6px 12px;
+    &:hover {
+        background: #ffffff44;
     }
 
-    label {
-        font-family: "Noto Sans";
-        font-weight: 500;
-    }
-
-    button {
-        background: transparent;
-        padding: 4px 8px;
-        border-radius: 4px;
-        transition: background 0.4s;
-
-        &:hover {
-            background: #ffffff44;
-        }
-
-        &:active {
-            background: #ffffff66;
-            transition: background 0.08s;
-        }
+    &:active {
+        background: #ffffff66;
+        transition: background 0.08s;
     }
 }
+.layout {
+    background: transparent;
+    padding: 6px;
+}
+.logo {
+    padding: 0;
+    > image {
+        border-radius: 4px;
+    }
+}
+.tray-item {
+    padding: 0;
+}
+
+.with-dividers {
+    > * + * {
+        border-left: 1px solid #aaaaaa66;
+        // margin-left: 6px;
+        padding-left: 8px;
+    }
+
+    .with-dividers > * + * {
+        border-left: none;
+        margin-left: 0;
+        padding-left: 0;
+    }
+}
+
+// Notifications
 .notification {
     background: $bg-color;
     color: $fg-color;

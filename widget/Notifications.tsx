@@ -1,5 +1,5 @@
 import { Astal, Gtk } from 'ags/gtk4'
-import { notifications, setNotifications } from '../service/notifications'
+import { notifications } from '../service/notifications'
 import { For } from 'gnim'
 
 export default function Notifications() {
