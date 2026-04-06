@@ -715,7 +715,7 @@ function Tray() {
 }
 
 export default function Bar(gdkmonitor: Gdk.Monitor) {
-    const time = createPoll("", 1000, "date")
+    const time = createPoll('', 1000, 'date "+%a, %b %-d  %-I:%M %p"')
 
     const result = (
         <window
@@ -755,9 +755,9 @@ export default function Bar(gdkmonitor: Gdk.Monitor) {
                 <box $type="end" spacing={8} hexpand halign={Gtk.Align.END} class="with-dividers">
                     <Tray />
                     <menubutton class="time">
-                        <label label={time} />
-                        <popover>
-                            <Gtk.Calendar />
+                        <label class="time-label" label={time} />
+                        <popover class="hyprbobr-time-popover">
+                            <Gtk.Calendar showWeekNumbers={false} />
                         </popover>
                     </menubutton>
                 </box>
