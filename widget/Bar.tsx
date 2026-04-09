@@ -107,6 +107,31 @@ function getMainClientClass(clients: AstalHyprland.Client[]): string | null {
     return cls
 }
 
+function getSecondaryClientClass(clients: AstalHyprland.Client[]): string | null {
+    if (clients.length <= 1) {
+        return null
+    }
+
+    const mainClient = getMainClient(clients)
+    const mainAddress = mainClient !== null ? mainClient.address : null
+
+    const rest = clients.filter((c) => c.address !== mainAddress)
+    if (rest.length === 0) {
+        return null
+    }
+
+    const secondary = rest.reduce((best, current) => {
+        return current.width * current.height > best.width * best.height ? current : best
+    })
+
+    const cls = secondary.initialClass
+    if (cls === null || cls === undefined || cls === '') {
+        return null
+    }
+
+    return cls
+}
+
 function getClientDisplayName(client: AstalHyprland.Client): string {
     if (client.initialClass !== null && client.initialClass !== undefined && client.initialClass !== '') {
         return client.initialClass
@@ -190,8 +215,9 @@ function Workspaces() {
     const workspaceButtons = new Map<number, Gtk.Button>()
     const workspaceIcons = new Map<number, Gtk.Image>()
     const workspaceMoreIndicators = new Map<number, Gtk.Image>()
-    const workspaceById = new Map<number, AstalHyprland.Workspace>()
+    const workspaceDots = new Map<number, Gtk.Label>()
     const workspaceMainClass = new Map<number, string | null>()
+    const workspaceSecondaryClass = new Map<number, string | null>()
     const clientNotifyHandlers = new Map<string, number[]>()
     const bubbleState: BubbleState = {
         visible: false,
@@ -208,8 +234,10 @@ function Workspaces() {
     let bubbleArea: Gtk.DrawingArea | null = null
     let bubbleAnimation: Adw.SpringAnimation | null = null
     let pendingSyncSourceId: number | null = null
+    let pendingBoundsSyncSourceId: number | null = null
     let pendingIconSyncSourceId: number | null = null
     let periodicIconSyncSourceId: number | null = null
+    const workspaceBoundsCache = new Map<number, WorkspaceBounds>()
 
     const queueBubbleDraw = () => {
         if (bubbleArea === null) {
@@ -219,14 +247,40 @@ function Workspaces() {
         bubbleArea.queue_draw()
     }
 
-    const updateWorkspaceVisuals = (workspace: AstalHyprland.Workspace) => {
-        const image = workspaceIcons.get(workspace.id)
-        const button = workspaceButtons.get(workspace.id)
-        const moreIndicator = workspaceMoreIndicators.get(workspace.id)
+    const updateWorkspaceVisuals = (workspaceId: number) => {
+        const workspace = hyprland.workspaces.find((ws) => ws.id === workspaceId) ?? null
+        const image = workspaceIcons.get(workspaceId)
+        const dot = workspaceDots.get(workspaceId)
+        const button = workspaceButtons.get(workspaceId)
+        const moreIndicator = workspaceMoreIndicators.get(workspaceId)
+        const hasWorkspace = workspace !== null
+
+        if (dot !== undefined) {
+            dot.set_visible(!hasWorkspace)
+        }
+
+        if (image !== undefined) {
+            image.set_opacity(hasWorkspace ? 1 : 0)
+        }
+
+        if (hasWorkspace === false) {
+            if (button !== undefined) {
+                button.set_has_tooltip(false)
+                button.set_tooltip_text(null)
+            }
+
+            if (moreIndicator !== undefined) {
+                moreIndicator.set_visible(false)
+            }
+
+            workspaceMainClass.delete(workspaceId)
+            workspaceSecondaryClass.delete(workspaceId)
+            return
+        }
 
         const tooltipText = getWorkspaceOtherAppsTooltip(workspace)
 
-        if (button !== undefined && button !== null) {
+        if (button !== undefined) {
             if (tooltipText === null) {
                 button.set_has_tooltip(false)
                 button.set_tooltip_text(null)
@@ -236,29 +290,44 @@ function Workspaces() {
             }
         }
 
-        if (moreIndicator !== undefined && moreIndicator !== null) {
+        if (moreIndicator !== undefined) {
             moreIndicator.set_visible(tooltipText !== null)
         }
 
-        if (image === undefined || image === null) {
+        if (image === undefined) {
             return
         }
 
+        const isEmpty = workspace.clients.length === 0
         const nextClass = getMainClientClass(workspace.clients)
-        const previousClass = workspaceMainClass.get(workspace.id)
+        const nextSecondaryClass = getSecondaryClientClass(workspace.clients)
+        const previousClass = workspaceMainClass.get(workspaceId)
+        const previousSecondaryClass = workspaceSecondaryClass.get(workspaceId)
 
-        if (previousClass !== undefined && previousClass === nextClass) {
+        if (isEmpty === false && previousClass !== undefined && previousClass === nextClass && previousSecondaryClass === nextSecondaryClass) {
             return
         }
 
-        workspaceMainClass.set(workspace.id, nextClass)
+        workspaceMainClass.set(workspaceId, nextClass)
+        workspaceSecondaryClass.set(workspaceId, nextSecondaryClass)
 
         if (nextClass === null) {
-            image.set_from_gicon(Gio.ThemedIcon.new('application-x-executable'))
-            return
+            const isFocused = isEmpty &&
+                hyprland.focusedWorkspace !== null &&
+                hyprland.focusedWorkspace !== undefined &&
+                hyprland.focusedWorkspace.id === workspaceId
+            image.set_from_gicon(Gio.ThemedIcon.new(isFocused ? 'list-add-symbolic' : 'application-x-executable'))
+        } else {
+            image.set_from_gicon(lookupAppIcon(nextClass))
         }
 
-        image.set_from_gicon(lookupAppIcon(nextClass))
+        if (moreIndicator !== undefined) {
+            if (nextSecondaryClass !== null) {
+                moreIndicator.set_from_gicon(lookupAppIcon(nextSecondaryClass))
+            } else {
+                moreIndicator.set_from_gicon(Gio.ThemedIcon.new('application-x-executable'))
+            }
+        }
     }
 
     const scheduleWorkspaceIconsSync = () => {
@@ -269,8 +338,8 @@ function Workspaces() {
         pendingIconSyncSourceId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
             pendingIconSyncSourceId = null
 
-            for (const workspace of workspaceById.values()) {
-                updateWorkspaceVisuals(workspace)
+            for (const workspaceId of workspaceButtons.keys()) {
+                updateWorkspaceVisuals(workspaceId)
             }
 
             return GLib.SOURCE_REMOVE
@@ -317,22 +386,43 @@ function Workspaces() {
     }
 
     const getWorkspaceBounds = (workspaceId: number): WorkspaceBounds | null => {
-        const button = workspaceButtons.get(workspaceId)
+        return workspaceBoundsCache.get(workspaceId) ?? null
+    }
 
-        if (button === undefined || button === null || bubbleArea === null) {
-            return null
+    const recalculateAllBounds = () => {
+        if (bubbleArea === null) {
+            return
         }
 
-        const [hasBounds, bounds] = button.compute_bounds(bubbleArea)
+        workspaceBoundsCache.clear()
 
-        if (hasBounds === false || bounds === null) {
-            return null
+        for (const [id, button] of workspaceButtons) {
+            const [hasBounds, bounds] = button.compute_bounds(bubbleArea)
+
+            if (hasBounds && bounds !== null) {
+                workspaceBoundsCache.set(id, { x: bounds.get_x(), width: bounds.get_width() })
+            }
+        }
+    }
+
+    const scheduleRecalculateAndSnap = () => {
+        if (pendingBoundsSyncSourceId !== null) {
+            GLib.source_remove(pendingBoundsSyncSourceId)
+            pendingBoundsSyncSourceId = null
         }
 
-        return {
-            x: bounds.get_x(),
-            width: bounds.get_width(),
-        }
+        pendingBoundsSyncSourceId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+            pendingBoundsSyncSourceId = null
+            recalculateAllBounds()
+
+            const currentWorkspace = hyprland.focusedWorkspace
+
+            if (currentWorkspace !== null && currentWorkspace !== undefined && currentWorkspace.id !== 0) {
+                snapBubbleToWorkspace(currentWorkspace.id)
+            }
+
+            return GLib.SOURCE_REMOVE
+        })
     }
 
     const updateBubbleFrame = (progress: number) => {
@@ -488,7 +578,7 @@ function Workspaces() {
     const initBubbleArea = (area: Gtk.DrawingArea) => {
         bubbleArea = area
         area.set_draw_func(drawBubble)
-        scheduleBubbleSync(false)
+        scheduleRecalculateAndSnap()
         scheduleWorkspaceIconsSync()
 
         for (const client of hyprland.clients) {
@@ -497,6 +587,10 @@ function Workspaces() {
 
         const focusHandler = hyprland.connect('notify::focused-workspace', () => {
             scheduleBubbleSync(true)
+            scheduleWorkspaceIconsSync()
+        })
+        const workspacesChangedHandler = hyprland.connect('notify::workspaces', () => {
+            scheduleWorkspaceIconsSync()
         })
         const clientAddedHandler = hyprland.connect('client-added', (client: AstalHyprland.Client) => {
             watchClient(client)
@@ -515,6 +609,7 @@ function Workspaces() {
 
         const destroyHandler = area.connect('destroy', () => {
             hyprland.disconnect(focusHandler)
+            hyprland.disconnect(workspacesChangedHandler)
             hyprland.disconnect(clientAddedHandler)
             hyprland.disconnect(clientMovedHandler)
             hyprland.disconnect(floatingHandler)
@@ -523,6 +618,11 @@ function Workspaces() {
             if (pendingSyncSourceId !== null) {
                 GLib.source_remove(pendingSyncSourceId)
                 pendingSyncSourceId = null
+            }
+
+            if (pendingBoundsSyncSourceId !== null) {
+                GLib.source_remove(pendingBoundsSyncSourceId)
+                pendingBoundsSyncSourceId = null
             }
 
             if (pendingIconSyncSourceId !== null) {
@@ -539,10 +639,12 @@ function Workspaces() {
                 unwatchClientByAddress(address)
             }
 
-            workspaceById.clear()
             workspaceIcons.clear()
             workspaceMoreIndicators.clear()
+            workspaceDots.clear()
             workspaceMainClass.clear()
+            workspaceSecondaryClass.clear()
+            workspaceBoundsCache.clear()
 
             if (bubbleAnimation !== null) {
                 bubbleAnimation.reset()
@@ -559,37 +661,44 @@ function Workspaces() {
         })
     }
 
-    const initWorkspaceButton = (button: Gtk.Button, workspace: AstalHyprland.Workspace) => {
-        workspaceButtons.set(workspace.id, button)
-        workspaceById.set(workspace.id, workspace)
-        scheduleBubbleSync(false)
-        scheduleWorkspaceIconsSync()
+    const initSlotButton = (button: Gtk.Button, workspaceId: number) => {
+        workspaceButtons.set(workspaceId, button)
+        scheduleRecalculateAndSnap()
 
         const destroyHandler = button.connect('destroy', () => {
-            workspaceButtons.delete(workspace.id)
-            workspaceById.delete(workspace.id)
-            workspaceMainClass.delete(workspace.id)
+            workspaceButtons.delete(workspaceId)
+            workspaceMainClass.delete(workspaceId)
+            workspaceSecondaryClass.delete(workspaceId)
             button.disconnect(destroyHandler)
-            scheduleBubbleSync(false)
         })
     }
 
-    const initWorkspaceIcon = (image: Gtk.Image, workspace: AstalHyprland.Workspace) => {
-        workspaceIcons.set(workspace.id, image)
-        updateWorkspaceVisuals(workspace)
+    const initSlotDot = (label: Gtk.Label, workspaceId: number) => {
+        workspaceDots.set(workspaceId, label)
+        label.set_visible(hyprland.workspaces.find((ws) => ws.id === workspaceId) === undefined)
+
+        const destroyHandler = label.connect('destroy', () => {
+            workspaceDots.delete(workspaceId)
+            label.disconnect(destroyHandler)
+        })
+    }
+
+    const initSlotIcon = (image: Gtk.Image, workspaceId: number) => {
+        workspaceIcons.set(workspaceId, image)
+        const hasWorkspace = hyprland.workspaces.find((ws) => ws.id === workspaceId) !== undefined
+        image.set_opacity(hasWorkspace ? 1 : 0)
 
         const destroyHandler = image.connect('destroy', () => {
-            workspaceIcons.delete(workspace.id)
+            workspaceIcons.delete(workspaceId)
             image.disconnect(destroyHandler)
         })
     }
 
-    const initWorkspaceMoreIndicator = (image: Gtk.Image, workspace: AstalHyprland.Workspace) => {
-        workspaceMoreIndicators.set(workspace.id, image)
-        updateWorkspaceVisuals(workspace)
+    const initSlotMoreIndicator = (image: Gtk.Image, workspaceId: number) => {
+        workspaceMoreIndicators.set(workspaceId, image)
 
         const destroyHandler = image.connect('destroy', () => {
-            workspaceMoreIndicators.delete(workspace.id)
+            workspaceMoreIndicators.delete(workspaceId)
             image.disconnect(destroyHandler)
         })
     }
@@ -597,57 +706,68 @@ function Workspaces() {
     return (
         <overlay $type="center">
             <box spacing={4} valign={Gtk.Align.CENTER}>
-                <For each={workspaces((value: AstalHyprland.Workspace[]) => value.filter((ws) => ws.id !== 0).sort((a, b) => a.id - b.id))}>
-                    {(workspace: AstalHyprland.Workspace) => {
-                        return (
-                            <button
-                                class={focusedWorkspace((currentWorkspace: AstalHyprland.Workspace) => {
-                                    if (currentWorkspace === undefined || currentWorkspace === null) {
-                                        return 'workspace-item'
-                                    }
+                <For each={workspaces((value: AstalHyprland.Workspace[]) => {
+                    const realWorkspaces = value.filter((ws) => ws.id !== 0)
+                    const maxId = realWorkspaces.length > 0 ? Math.max(...realWorkspaces.map((ws) => ws.id)) : 0
+                    const displayMax = Math.max(10, maxId)
+                    const allIds: number[] = []
 
-                                    if (currentWorkspace.id === workspace.id) {
-                                        return 'workspace-item workspace-item-active'
-                                    }
+                    for (let i = 1; i <= displayMax; i++) {
+                        allIds.push(i)
+                    }
 
+                    return allIds
+                })}>
+                    {(workspaceId: number) => (
+                        <button
+                            class={focusedWorkspace((currentWorkspace: AstalHyprland.Workspace) => {
+                                if (currentWorkspace === undefined || currentWorkspace === null) {
                                     return 'workspace-item'
-                                })}
-                                $={(self) => initWorkspaceButton(self, workspace)}
-                                onClicked={() => {
-                                    const currentWorkspace = hyprland.focusedWorkspace
+                                }
 
-                                    if (currentWorkspace === null || currentWorkspace === undefined) {
-                                        workspace.focus()
-                                        return
-                                    }
+                                if (currentWorkspace.id === workspaceId) {
+                                    return 'workspace-item workspace-item-active'
+                                }
 
-                                    if (currentWorkspace.id === workspace.id) {
-                                        return
-                                    }
+                                return 'workspace-item'
+                            })}
+                            $={(self) => initSlotButton(self, workspaceId)}
+                            onClicked={() => {
+                                const currentWorkspace = hyprland.focusedWorkspace
 
-                                    workspace.focus()
-                                }}
-                            >
-                                <overlay class="workspace-icon-stack">
-                                    <image
-                                        gicon={Gio.ThemedIcon.new('application-x-executable')}
-                                        $={(self) => initWorkspaceIcon(self, workspace)}
-                                        pixelSize={20}
-                                    />
-                                    <image
-                                        $type="overlay"
-                                        class="workspace-more-indicator"
-                                        gicon={Gio.ThemedIcon.new('application-x-executable')}
-                                        halign={Gtk.Align.END}
-                                        valign={Gtk.Align.END}
-                                        pixelSize={16}
-                                        visible={false}
-                                        $={(self) => initWorkspaceMoreIndicator(self, workspace)}
-                                    />
-                                </overlay>
-                            </button>
-                        )
-                    }}
+                                if (currentWorkspace !== null && currentWorkspace !== undefined && currentWorkspace.id === workspaceId) {
+                                    return
+                                }
+
+                                hyprland.dispatch('workspace', workspaceId.toString())
+                            }}
+                        >
+                            <overlay class="workspace-icon-stack">
+                                <image
+                                    gicon={Gio.ThemedIcon.new('application-x-executable')}
+                                    pixelSize={20}
+                                    $={(self) => initSlotIcon(self, workspaceId)}
+                                />
+                                <label
+                                    $type="overlay"
+                                    label="•"
+                                    halign={Gtk.Align.CENTER}
+                                    valign={Gtk.Align.CENTER}
+                                    $={(self) => initSlotDot(self, workspaceId)}
+                                />
+                                <image
+                                    $type="overlay"
+                                    class="workspace-more-indicator"
+                                    gicon={Gio.ThemedIcon.new('application-x-executable')}
+                                    halign={Gtk.Align.END}
+                                    valign={Gtk.Align.END}
+                                    pixelSize={16}
+                                    visible={false}
+                                    $={(self) => initSlotMoreIndicator(self, workspaceId)}
+                                />
+                            </overlay>
+                        </button>
+                    )}
                 </For>
             </box>
             <drawingarea
@@ -658,7 +778,7 @@ function Workspaces() {
                 canTarget={false}
                 canFocus={false}
                 focusable={false}
-                onResize={() => scheduleBubbleSync(false)}
+                onResize={() => scheduleRecalculateAndSnap()}
                 $={(self) => initBubbleArea(self)}
             />
         </overlay>
