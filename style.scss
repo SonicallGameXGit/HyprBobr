@@ -115,6 +115,23 @@ button {
     min-width: 180px;
 }
 
+// Volume indicator
+.volume-indicator {
+    drawingarea {
+        background: transparent;
+    }
+}
+.volume-value-label {
+    font-size: 18px;
+    font-weight: 600;
+}
+.volume-mute-button {
+    padding: 4px;
+    border-radius: 50%;
+    min-width: 0;
+    min-height: 0;
+}
+
 // Notifications
 .notification {
     background: $bg-color;
