@@ -121,9 +121,16 @@ button {
         background: transparent;
     }
 }
+.volume-edge-zone {
+    background: rgba(255, 255, 255, 0.01);
+    border: none;
+    box-shadow: none;
+    border-radius: 0;
+}
 .volume-value-label {
-    font-size: 18px;
+    font-size: 15px;
     font-weight: 600;
+    min-width: 50px;
 }
 .volume-mute-button {
     padding: 4px;

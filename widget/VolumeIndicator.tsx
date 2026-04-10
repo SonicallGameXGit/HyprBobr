@@ -5,7 +5,7 @@ import AstalWp from 'gi://AstalWp'
 import GLib from 'gi://GLib'
 import type Cairo from 'cairo'
 
-const VISIBLE_MARGIN = 12
+const VISIBLE_MARGIN = 24
 const HIDDEN_MARGIN = -320
 const SHOW_DURATION_MS = 2500
 const BAR_RADIUS = 8
@@ -41,6 +41,7 @@ export default function VolumeIndicator() {
     let currentMuted = false
     let isHovered = false
     let isDragging = false
+    let isHoveredZone = false
 
     const queueDraw = () => {
         if (drawArea !== null) {
@@ -217,6 +218,15 @@ export default function VolumeIndicator() {
             }
         })
         box.add_controller(motion)
+
+        const scroll = new Gtk.EventControllerScroll()
+        scroll.flags = Gtk.EventControllerScrollFlags.VERTICAL
+        scroll.connect('scroll', (_ctrl: Gtk.EventControllerScroll, _dx: number, dy: number) => {
+            const step = 0.05
+            setSpeakerVolume(currentVolume - dy * step)
+            return true
+        })
+        box.add_controller(scroll)
     }
 
     const ensureAnimation = () => {
@@ -294,7 +304,7 @@ export default function VolumeIndicator() {
     const scheduleHide = () => {
         cancelHide()
 
-        if (isHovered || isDragging) {
+        if (isHovered || isHoveredZone || isDragging) {
             return
         }
 
@@ -368,6 +378,44 @@ export default function VolumeIndicator() {
         })
     }
 
+    const initZoneWindow = (zoneWin: Astal.Window) => {
+        const motion = new Gtk.EventControllerMotion()
+        motion.connect('enter', () => {
+            isHoveredZone = true
+            cancelHide()
+            slideIn()
+        })
+        motion.connect('leave', () => {
+            isHoveredZone = false
+            if (!isHovered && !isDragging) {
+                scheduleHide()
+            }
+        })
+        const root = zoneWin.get_child()
+        if (root !== null) {
+            root.add_controller(motion)
+        } else {
+            zoneWin.add_controller(motion)
+        }
+    }
+
+    const _zoneWindow = (
+        <window
+            visible
+            name="hyprbobr-volume-zone"
+            namespace="hyprbobr-volume-zone"
+            class="volume-edge-zone"
+            layer={Astal.Layer.TOP}
+            exclusivity={Astal.Exclusivity.NORMAL}
+            keymode={Astal.Keymode.NONE}
+            anchor={Astal.WindowAnchor.RIGHT}
+            application={app}
+            $={(self) => initZoneWindow(self as Astal.Window)}
+        >
+            <box widthRequest={1} heightRequest={270} />
+        </window>
+    )
+
     return (
         <window
             visible
@@ -395,6 +443,7 @@ export default function VolumeIndicator() {
                 <label
                     label="—"
                     halign={Gtk.Align.CENTER}
+                    xalign={0.5}
                     class="volume-value-label"
                     $={(self) => { labelWidget = self }}
                 />
