@@ -14,6 +14,49 @@ import { readFile, writeFile } from 'ags/file'
 
 const HOME = GLib.get_home_dir()
 const LAYOUT_FILE = `${HOME}/.config/hypr/keyboard-layouts.conf`
+const APP_CONF_DIR = `${HOME}/.config/hyprbobr`
+const APP_CONF_FILE = `${APP_CONF_DIR}/hyprbobr.conf`
+
+function readAppConf(): Record<string, string> {
+    try {
+        const content = readFile(APP_CONF_FILE)
+        const result: Record<string, string> = {}
+        for (const line of content.split('\n')) {
+            const trimmed = line.trim()
+            if (trimmed === '' || trimmed.startsWith('#')) {
+                continue
+            }
+            const eqIdx = trimmed.indexOf('=')
+            if (eqIdx === -1) {
+                continue
+            }
+            result[trimmed.substring(0, eqIdx).trim()] = trimmed.substring(eqIdx + 1).trim()
+        }
+        return result
+    } catch {
+        return {}
+    }
+}
+
+function writeAppConf(conf: Record<string, string>) {
+    try {
+        GLib.mkdir_with_parents(APP_CONF_DIR, 0o755)
+    } catch {
+        // dir may already exist
+    }
+    const lines = Object.entries(conf).map(([k, v]) => `${k}=${v}`)
+    writeFile(APP_CONF_FILE, lines.join('\n') + '\n')
+}
+
+function ensureAppConf(): Record<string, string> {
+    const existing = readAppConf()
+    if (Object.keys(existing).length > 0) {
+        return existing
+    }
+    const defaults: Record<string, string> = { ignore_kb_layout_order: 'false' }
+    writeAppConf(defaults)
+    return defaults
+}
 
 type WorkspaceBounds = {
     x: number
@@ -1193,6 +1236,84 @@ function openAutoResolverDialog(layouts: string[], onFixed: (newLayouts: string[
     resolverDialog.present(app.get_active_window())
 }
 
+function openKbOrderWarningDialog(
+    layouts: string[],
+    onFix: () => void,
+    onSave: (ignoreValue: boolean) => void
+) {
+    const warnDialog = new Adw.Dialog()
+    warnDialog.contentWidth = 360
+    warnDialog.contentHeight = -1
+
+    const content = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 0 })
+
+    const title = new Gtk.Label({ label: 'Keyboard layout order warning' })
+    title.add_css_class('title-4')
+    title.halign = Gtk.Align.START
+    title.marginStart = 16
+    title.marginEnd = 16
+    title.marginTop = 16
+    title.marginBottom = 6
+    content.append(title)
+
+    const msg = new Gtk.Label({
+        label: `Your current layout order starts with "${layouts[0].toUpperCase()}" instead of "US". Placing any language before "US" can cause keybinding conflicts and other issues in Hyprland.`,
+    })
+    msg.wrap = true
+    msg.halign = Gtk.Align.START
+    msg.marginStart = 16
+    msg.marginEnd = 16
+    msg.marginBottom = 12
+    content.append(msg)
+
+    const sep = new Gtk.Separator()
+    content.append(sep)
+
+    let dontShowAgain = false
+
+    const checkRow = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 8 })
+    checkRow.marginStart = 16
+    checkRow.marginEnd = 16
+    checkRow.marginTop = 10
+    checkRow.marginBottom = 4
+    const dontShowCheck = new Gtk.CheckButton({ label: "Don't show again" })
+    dontShowCheck.connect('toggled', () => { dontShowAgain = dontShowCheck.active })
+    checkRow.append(dontShowCheck)
+    content.append(checkRow)
+
+    const btnRow = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 8 })
+    btnRow.halign = Gtk.Align.END
+    btnRow.marginStart = 16
+    btnRow.marginEnd = 16
+    btnRow.marginTop = 8
+    btnRow.marginBottom = 16
+
+    const ignoreBtn = new Gtk.Button({ label: "I know what I'm doing!" })
+    ignoreBtn.connect('clicked', () => {
+        if (dontShowAgain) {
+            onSave(true)
+        }
+        warnDialog.force_close()
+    })
+
+    const fixBtn = new Gtk.Button({ label: 'Fix' })
+    fixBtn.add_css_class('suggested-action')
+    fixBtn.connect('clicked', () => {
+        if (dontShowAgain) {
+            onSave(false)
+        }
+        onFix()
+        warnDialog.force_close()
+    })
+
+    btnRow.append(ignoreBtn)
+    btnRow.append(fixBtn)
+    content.append(btnRow)
+
+    warnDialog.set_child(content)
+    warnDialog.present(app.get_active_window())
+}
+
 function openLanguageManagerDialog(
     parent: Gtk.Widget,
     currentLayouts: string[],
@@ -1528,16 +1649,69 @@ function LanguageIndicator() {
     let activeCode = initialKbState !== null ? initialKbState.activeCode : (currentLayouts[0] ?? '')
     const initialLabel = langLabel(activeCode)
 
+    const appConf = ensureAppConf()
+    let ignoreKbLayoutOrder = appConf['ignore_kb_layout_order'] === 'true'
+
+    const saveAppConf = (newIgnore: boolean) => {
+        ignoreKbLayoutOrder = newIgnore
+        const conf = readAppConf()
+        conf['ignore_kb_layout_order'] = newIgnore ? 'true' : 'false'
+        writeAppConf(conf)
+    }
+
+    const checkKbLayoutOrder = (layouts: string[]) => {
+        if (ignoreKbLayoutOrder) {
+            return
+        }
+        if (layouts.length === 0 || layouts[0].toLowerCase() === 'us') {
+            return
+        }
+        openKbOrderWarningDialog(
+            layouts,
+            () => {
+                const others = layouts.filter((c) => c.toLowerCase() !== 'us')
+                const fixed = ['us', ...others]
+                currentLayouts = fixed
+                writeFile(LAYOUT_FILE, `input {\n    kb_layout = ${fixed.join(',')}\n}`)
+                exec('hyprctl reload')
+            },
+            (ignoreValue) => {
+                saveAppConf(ignoreValue)
+            },
+        )
+    }
+
     GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
         const fileLayouts = readLayoutFileLayouts()
-        if (fileLayouts.length > 4) {
+        if (fileLayouts.length === 0) {
+            const fallback = currentLayouts.length > 0 ? currentLayouts : ['us']
+            const others = fallback.filter((c) => c !== 'us')
+            const initial = ['us', ...others].slice(0, 4)
+            writeFile(LAYOUT_FILE, `input {\n    kb_layout = ${initial.join(',')}\n}`)
+        } else if (fileLayouts.length > 4) {
             openAutoResolverDialog(fileLayouts, (fixed) => {
                 currentLayouts = fixed
                 writeFile(LAYOUT_FILE, `input {\n    kb_layout = ${fixed.join(',')}\n}`)
                 exec('hyprctl reload')
             })
+        } else {
+            checkKbLayoutOrder(fileLayouts)
         }
         return GLib.SOURCE_REMOVE
+    })
+
+    const layoutFileMonitor = Gio.File.new_for_path(LAYOUT_FILE).monitor_file(
+        Gio.FileMonitorFlags.NONE,
+        null,
+    )
+    layoutFileMonitor.connect('changed', (_mon: Gio.FileMonitor, _file: Gio.File, _other: Gio.File | null, eventType: Gio.FileMonitorEvent) => {
+        if (eventType !== Gio.FileMonitorEvent.CHANGES_DONE_HINT && eventType !== Gio.FileMonitorEvent.CREATED) {
+            return
+        }
+        const fileLayouts = readLayoutFileLayouts()
+        if (fileLayouts.length > 0 && fileLayouts.length <= 4) {
+            checkKbLayoutOrder(fileLayouts)
+        }
     })
 
     const refreshLayouts = () => {
