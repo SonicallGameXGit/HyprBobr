@@ -834,6 +834,503 @@ function Tray() {
     )
 }
 
+type KeyboardState = {
+    name: string
+    layouts: string[]
+    activeKeymap: string
+    activeCode: string
+}
+
+const XKB_DISPLAY_HINTS: Record<string, string[]> = {
+    us: ['english (us)', '(us)', 'american'],
+    ru: ['russian'],
+    de: ['german', 'deutsch'],
+    fr: ['french', 'français'],
+    gb: ['english (uk)', 'british', '(gb)'],
+    ua: ['ukrainian'],
+    pl: ['polish'],
+    es: ['spanish', 'español'],
+    it: ['italian'],
+    pt: ['portuguese'],
+    nl: ['dutch'],
+    tr: ['turkish'],
+    jp: ['japanese'],
+    cn: ['chinese'],
+    kr: ['korean'],
+    ar: ['arabic'],
+    cz: ['czech'],
+    sk: ['slovak'],
+    hu: ['hungarian'],
+    ro: ['romanian'],
+    bg: ['bulgarian'],
+    hr: ['croatian'],
+    sr: ['serbian'],
+    fi: ['finnish'],
+    se: ['swedish'],
+    no: ['norwegian'],
+    dk: ['danish'],
+    il: ['hebrew'],
+    gr: ['greek'],
+    ge: ['georgian'],
+    by: ['belarusian'],
+    lt: ['lithuanian'],
+    lv: ['latvian'],
+    ee: ['estonian'],
+}
+
+function matchLayoutToCode(layouts: string[], activeKeymap: string): string {
+    const lower = activeKeymap.toLowerCase()
+    for (const code of layouts) {
+        const hints = XKB_DISPLAY_HINTS[code.toLowerCase()]
+        if (hints !== undefined && hints.some((h) => lower.includes(h))) {
+            return code
+        }
+        if (lower.startsWith(code.toLowerCase())) {
+            return code
+        }
+    }
+    return layouts.length > 0 ? layouts[0] : ''
+}
+
+function codeToFlag(code: string): string {
+    const lower = code.toLowerCase()
+    const a = lower.charCodeAt(0) - 97
+    const b = lower.charCodeAt(1) - 97
+    if (a < 0 || a > 25 || b < 0 || b > 25) {
+        return ''
+    }
+    return String.fromCodePoint(0x1F1E6 + a, 0x1F1E6 + b)
+}
+
+function langLabel(code: string): string {
+    const flag = codeToFlag(code)
+    const upper = code.toUpperCase()
+    if (flag === '') {
+        return upper
+    }
+    return flag/*  + ' ' + upper */
+}
+
+// First term is used as display name in the picker. Rest are searchable aliases.
+const LANG_INFO: Record<string, string[]> = {
+    af: ['Afrikaans', 'South Africa', 'Suid-Afrika'],
+    al: ['Albanian', 'Albania', 'Shqipëri', 'Shqip'],
+    am: ['Armenian', 'Armenia', 'Հայաստան', 'Հայերեն'],
+    ao: ['Angolan Keyboard', 'Angola'],
+    ara: ['Arabic', 'العربية', 'عربي'],
+    ar: ['Arabic (AR)', 'العربية'],
+    at: ['German (Austria)', 'Austria', 'Österreich', 'Deutsch'],
+    az: ['Azerbaijani', 'Azerbaijan', 'Azərbaycan', 'Azərbaycanca'],
+    ba: ['Bosnian', 'Bosnia', 'Bosna', 'Bosanski'],
+    bd: ['Bangla (Bangladesh)', 'Bangladesh', 'বাংলাদেশ', 'বাংলা'],
+    be: ['Belgian', 'Belgium', 'Belgique', 'België', 'Belgien'],
+    bg: ['Bulgarian', 'Bulgaria', 'България', 'Български'],
+    brai: ['Braille'],
+    br: ['Portuguese (Brazil)', 'Brazil', 'Brasil', 'Português'],
+    bt: ['Dzongkha', 'Bhutan', 'འབྲུག'],
+    bw: ['Tswana (Botswana)', 'Botswana'],
+    by: ['Belarusian', 'Belarus', 'Беларусь', 'Беларуская'],
+    ca: ['French (Canada)', 'Canada', 'Canadien', 'Français'],
+    cd: ['French (DR Congo)', 'Congo'],
+    ch: ['German (Switzerland)', 'Switzerland', 'Schweiz', 'Suisse', 'Svizzera'],
+    cm: ['Cameroon Multilingual'],
+    cn: ['Chinese', 'China', '中国', '中文', '汉语', '普通话'],
+    hr: ['Croatian', 'Croatia', 'Hrvatska', 'Hrvatski'],
+    cz: ['Czech', 'Czechia', 'Česko', 'Čeština'],
+    dk: ['Danish', 'Denmark', 'Danmark', 'Dansk'],
+    ee: ['Estonian', 'Estonia', 'Eesti'],
+    eg: ['Arabic (Egypt)', 'Egypt', 'مصر'],
+    epo: ['Esperanto'],
+    es: ['Spanish', 'Spain', 'España', 'Español'],
+    et: ['Amharic', 'Ethiopia', 'ኢትዮጵያ', 'አማርኛ'],
+    eu: ['Basque'],
+    fi: ['Finnish', 'Finland', 'Suomi'],
+    fo: ['Faroese', 'Faroe Islands', 'Færøerne'],
+    fr: ['French', 'France', 'Français'],
+    gb: ['English (UK)', 'United Kingdom', 'Britain', 'England'],
+    ge: ['Georgian', 'Georgia', 'საქართველო', 'ქართული'],
+    gh: ['Ghanaian', 'Ghana'],
+    gn: ['Guinean Keyboard'],
+    gr: ['Greek', 'Greece', 'Ελλάδα', 'Ελληνικά'],
+    hr2: ['Croatian (variant)', 'Croatia', 'Hrvatska'],
+    hu: ['Hungarian', 'Hungary', 'Magyarország', 'Magyar'],
+    id: ['Indonesian', 'Indonesia', 'Bahasa Indonesia'],
+    ie: ['Irish', 'Ireland', 'Éire', 'Gaeilge'],
+    il: ['Hebrew', 'Israel', 'ישראל', 'עברית'],
+    in: ['Indian', 'India', 'भारत', 'हिन्दी'],
+    iq: ['Arabic (Iraq)', 'Iraq', 'العراق'],
+    ir: ['Persian', 'Iran', 'ایران', 'فارسی'],
+    is: ['Icelandic', 'Iceland', 'Ísland', 'Íslenska'],
+    it: ['Italian', 'Italy', 'Italia', 'Italiano'],
+    jp: ['Japanese', 'Japan', '日本', '日本語'],
+    ke: ['Swahili (Kenya)', 'Kenya'],
+    kg: ['Kyrgyz', 'Kyrgyzstan', 'Кыргызстан', 'Кыргызча'],
+    kh: ['Khmer', 'Cambodia', 'កម្ពុជា'],
+    kr: ['Korean', 'South Korea', '한국', '한국어'],
+    kz: ['Kazakh', 'Kazakhstan', 'Қазақстан', 'Қазақша'],
+    la: ['Lao', 'Laos', 'ລາວ'],
+    latam: ['Spanish (Latin America)', 'Latin America', 'Latinoamérica'],
+    lb: ['Luxembourgish', 'Luxembourg', 'Lëtzebuerg'],
+    lk: ['Sinhala', 'Sri Lanka', 'ශ්‍රී ලංකා', 'සිංහල'],
+    lt: ['Lithuanian', 'Lithuania', 'Lietuva', 'Lietuvių'],
+    lv: ['Latvian', 'Latvia', 'Latvija', 'Latviešu'],
+    ma: ['Arabic (Morocco)', 'Morocco', 'المغرب'],
+    mao: ['Māori', 'New Zealand'],
+    me: ['Montenegrin', 'Montenegro', 'Crna Gora'],
+    mk: ['Macedonian', 'North Macedonia', 'Македонија', 'Македонски'],
+    ml: ['Bambara', 'Mali'],
+    mm: ['Burmese', 'Myanmar', 'မြန်မာ'],
+    mn: ['Mongolian', 'Mongolia', 'Монгол', 'Монгол Улс'],
+    mt: ['Maltese', 'Malta', 'Malti'],
+    mv: ['Dhivehi', 'Maldives', 'ދިވެހި'],
+    my: ['Malay', 'Malaysia', 'Malaysia'],
+    ng: ['Nigerian', 'Nigeria', 'Hausa', 'Yoruba', 'Igbo'],
+    nl: ['Dutch', 'Netherlands', 'Nederland', 'Nederlands'],
+    no: ['Norwegian', 'Norway', 'Norge', 'Norsk'],
+    np: ['Nepali', 'Nepal', 'नेपाल', 'नेपाली'],
+    ph: ['Filipino', 'Philippines', 'Pilipinas'],
+    pk: ['Urdu', 'Pakistan', 'پاکستان', 'اردو'],
+    pl: ['Polish', 'Poland', 'Polska', 'Polski'],
+    pt: ['Portuguese', 'Portugal', 'Português'],
+    ro: ['Romanian', 'Romania', 'România', 'Română'],
+    rs: ['Serbian', 'Serbia', 'Србија', 'Српски'],
+    ru: ['Russian', 'Russia', 'Россия', 'Русский', 'Русский язык'],
+    se: ['Swedish', 'Sweden', 'Sverige', 'Svenska'],
+    si: ['Slovenian', 'Slovenia', 'Slovenija', 'Slovenščina'],
+    sk: ['Slovak', 'Slovakia', 'Slovensko', 'Slovenčina'],
+    sn: ['Wolof', 'Senegal'],
+    so: ['Somali', 'Somalia'],
+    sq: ['Albanian'],
+    sr: ['Serbian (variant)', 'Serbia', 'Србија', 'Српски'],
+    sy: ['Arabic (Syria)', 'Syria', 'سوريا'],
+    th: ['Thai', 'Thailand', 'ไทย', 'ประเทศไทย'],
+    tj: ['Tajik', 'Tajikistan', 'Тоҷикистон', 'Тоҷикӣ'],
+    tm: ['Turkmen', 'Turkmenistan', 'Türkmenistan'],
+    tr: ['Turkish', 'Turkey', 'Türkiye', 'Türkçe'],
+    tw: ['Traditional Chinese', 'Taiwan', '台灣', '繁體中文'],
+    tz: ['Swahili (Tanzania)', 'Tanzania'],
+    ua: ['Ukrainian', 'Ukraine', 'Україна', 'Українська'],
+    us: ['English (US)', 'United States', 'America', 'American English'],
+    uz: ['Uzbek', 'Uzbekistan', 'Oʻzbekiston', 'Oʻzbek'],
+    vn: ['Vietnamese', 'Vietnam', 'Việt Nam', 'Tiếng Việt'],
+    za: ['South African English', 'South Africa'],
+}
+
+function langSearchTerms(code: string): string[] {
+    const lower = code.toLowerCase()
+    const info = LANG_INFO[lower]
+    const terms = [lower, ...(info !== undefined ? info : [])]
+    return terms.map((t: string) => t.toLowerCase())
+}
+
+function langDisplayName(code: string): string {
+    const lower = code.toLowerCase()
+    const info = LANG_INFO[lower]
+    if (info !== undefined && info.length > 0) {
+        return info[0]
+    }
+    return code.toUpperCase()
+}
+
+function fetchKeyboardState(): KeyboardState | null {
+    try {
+        const [ok, stdout] = GLib.spawn_command_line_sync('hyprctl -j devices')
+        if (!ok || stdout === null) {
+            return null
+        }
+        const text = new TextDecoder().decode(stdout)
+        const data = JSON.parse(text) as Record<string, unknown>
+        const keyboards = Array.isArray(data.keyboards) ? (data.keyboards as unknown[]) : []
+        const mainKb = keyboards.find((kb) => {
+            if (typeof kb !== 'object' || kb === null) {
+                return false
+            }
+            return (kb as Record<string, unknown>).main === true
+        }) ?? (keyboards.length > 0 ? keyboards[0] : undefined)
+        if (mainKb === undefined || mainKb === null || typeof mainKb !== 'object') {
+            return null
+        }
+        const kb = mainKb as Record<string, unknown>
+        const layoutStr = typeof kb.layout === 'string' ? kb.layout : ''
+        const layouts = layoutStr.split(',').map((l: string) => l.trim()).filter((l: string) => l !== '')
+        const activeKeymap = typeof kb.active_keymap === 'string' ? kb.active_keymap : ''
+        const name = typeof kb.name === 'string' ? kb.name : ''
+        const activeCode = matchLayoutToCode(layouts, activeKeymap)
+        return { name, layouts, activeKeymap, activeCode }
+    } catch {
+        return null
+    }
+}
+
+function fetchAllLayouts(): string[] {
+    try {
+        const [ok, stdout] = GLib.spawn_command_line_sync('localectl list-x11-keymap-layouts')
+        if (!ok || stdout === null) {
+            return []
+        }
+        const text = new TextDecoder().decode(stdout)
+        return text.split('\n').map((l: string) => l.trim()).filter((l: string) => l !== '')
+    } catch {
+        return []
+    }
+}
+
+function hyprlandConfigPath(): string | null {
+    const configDir = GLib.get_user_config_dir()
+    const path = configDir + '/hypr/hyprland.conf'
+    if (GLib.file_test(path, GLib.FileTest.EXISTS)) {
+        return path
+    }
+    return null
+}
+
+function applyLayouts(newLayouts: string[]) {
+    const layoutStr = newLayouts.join(',')
+    GLib.spawn_command_line_async(`hyprctl keyword input:kb_layout ${layoutStr}`)
+    const configPath = hyprlandConfigPath()
+    if (configPath === null) {
+        return
+    }
+    try {
+        const [readOk, contents] = GLib.file_get_contents(configPath)
+        if (!readOk || contents === null) {
+            return
+        }
+        const text = new TextDecoder().decode(contents)
+        const newText = text.replace(/([ \t]*kb_layout[ \t]*=[ \t]*)([^\n]*)/, `$1${layoutStr}`)
+        GLib.file_set_contents(configPath, newText)
+    } catch {
+        // silently ignore config write errors
+    }
+}
+
+function openLanguageManagerDialog(
+    parent: Gtk.Widget,
+    currentLayouts: string[],
+    onApply: (newLayouts: string[]) => void
+) {
+    const allLayouts = fetchAllLayouts()
+    const originalSet = new Set(currentLayouts.map((l: string) => l.toLowerCase()))
+    const checkedSet = new Set(originalSet)
+
+    let applyBtn: Gtk.Button | null = null
+
+    const updateApplyLabel = () => {
+        if (applyBtn === null) {
+            return
+        }
+        const added = [...checkedSet].filter((c) => !originalSet.has(c)).length
+        const removed = [...originalSet].filter((c) => !checkedSet.has(c)).length
+        const parts: string[] = []
+        if (added > 0) {
+            parts.push(`+${added}`)
+        }
+        if (removed > 0) {
+            parts.push(`-${removed}`)
+        }
+        applyBtn.label = parts.length > 0 ? `Apply (${parts.join(' ')})` : 'Apply'
+    }
+
+    const dialog = new Adw.Dialog()
+    dialog.contentWidth = 360
+    dialog.contentHeight = 520
+
+    const searchEntry = new Gtk.SearchEntry()
+    searchEntry.placeholderText = 'Search...'
+    searchEntry.marginTop = 8
+    searchEntry.marginStart = 8
+    searchEntry.marginEnd = 8
+    searchEntry.marginBottom = 4
+
+    const listBox = new Gtk.ListBox()
+    listBox.selectionMode = Gtk.SelectionMode.NONE
+    listBox.add_css_class('lang-manager-list')
+
+    type RowMeta = { row: Gtk.ListBoxRow, code: string }
+    const rows: RowMeta[] = []
+
+    for (const code of allLayouts) {
+        const row = new Gtk.ListBoxRow()
+        const rowBox = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 8 })
+        rowBox.marginStart = 10
+        rowBox.marginEnd = 10
+        rowBox.marginTop = 4
+        rowBox.marginBottom = 4
+
+        const flag = codeToFlag(code)
+        if (flag !== '') {
+            const flagLbl = new Gtk.Label({ label: flag })
+            rowBox.append(flagLbl)
+        }
+
+        const displayName = langDisplayName(code)
+        const nameLbl = new Gtk.Label({ label: displayName })
+        nameLbl.halign = Gtk.Align.START
+        nameLbl.hexpand = true
+        rowBox.append(nameLbl)
+
+        const check = new Gtk.CheckButton()
+        check.active = checkedSet.has(code.toLowerCase())
+        check.connect('toggled', () => {
+            const lower = code.toLowerCase()
+            if (check.active) {
+                checkedSet.add(lower)
+            } else {
+                checkedSet.delete(lower)
+            }
+            updateApplyLabel()
+        })
+        rowBox.append(check)
+
+        row.set_child(rowBox)
+        listBox.append(row)
+        rows.push({ row, code })
+    }
+
+    searchEntry.connect('search-changed', () => {
+        const q = searchEntry.text.toLowerCase()
+        for (const { row, code } of rows) {
+            row.visible = q === '' || langSearchTerms(code).some((t) => t.includes(q))
+        }
+    })
+
+    const scrolled = new Gtk.ScrolledWindow()
+    scrolled.vexpand = true
+    scrolled.hexpand = true
+    scrolled.set_child(listBox)
+
+    const cancelBtn = new Gtk.Button({ label: 'Cancel' })
+    cancelBtn.connect('clicked', () => {
+        dialog.force_close()
+    })
+
+    applyBtn = new Gtk.Button({ label: 'Apply' })
+    applyBtn.add_css_class('suggested-action')
+    applyBtn.connect('clicked', () => {
+        const newLayouts = allLayouts.filter((code) => checkedSet.has(code.toLowerCase()))
+        onApply(newLayouts)
+        dialog.force_close()
+    })
+
+    updateApplyLabel()
+
+    const btnRow = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 8 })
+    btnRow.halign = Gtk.Align.END
+    btnRow.marginTop = 8
+    btnRow.marginBottom = 8
+    btnRow.marginStart = 8
+    btnRow.marginEnd = 8
+    btnRow.append(cancelBtn)
+    btnRow.append(applyBtn)
+
+    const sep = new Gtk.Separator()
+
+    const content = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL })
+    content.append(searchEntry)
+    content.append(scrolled)
+    content.append(sep)
+    content.append(btnRow)
+
+    dialog.set_child(content)
+    dialog.present(parent)
+}
+
+function LanguageIndicator() {
+    const hyprland = AstalHyprland.get_default()
+    const kbState = fetchKeyboardState()
+    let label: Gtk.Label | null = null
+    let menuBtn: Gtk.MenuButton | null = null
+    let popoverBox: Gtk.Box | null = null
+    let currentLayouts: string[] = kbState !== null ? kbState.layouts : []
+    const kbName = kbState !== null ? kbState.name : ''
+    const initialLabel = kbState !== null ? langLabel(kbState.activeCode) : '--'
+
+    const rebuildPopoverContent = () => {
+        if (popoverBox === null) {
+            return
+        }
+        const box = popoverBox
+
+        let child = box.get_first_child()
+        while (child !== null) {
+            const next = child.get_next_sibling()
+            box.remove(child)
+            child = next
+        }
+
+        currentLayouts.forEach((code, index) => {
+            const btn = new Gtk.Button()
+            btn.hexpand = true
+            btn.add_css_class('lang-item')
+            const lbl = new Gtk.Label({ label: langLabel(code) })
+            lbl.halign = Gtk.Align.CENTER
+            lbl.hexpand = true
+            btn.set_child(lbl)
+            btn.connect('clicked', () => {
+                GLib.spawn_command_line_async(`hyprctl switchxkblayout ${kbName} ${index}`)
+                if (menuBtn !== null) {
+                    menuBtn.popdown()
+                }
+            })
+            box.append(btn)
+        })
+
+        const addBtn = new Gtk.Button()
+        addBtn.hexpand = true
+        addBtn.add_css_class('lang-add-btn')
+        const addLbl = new Gtk.Label({ label: '+' })
+        addLbl.halign = Gtk.Align.CENTER
+        addLbl.hexpand = true
+        addBtn.set_child(addLbl)
+        addBtn.connect('clicked', () => {
+            openLanguageManagerDialog(addBtn, currentLayouts, (newLayouts) => {
+                currentLayouts = newLayouts
+                applyLayouts(newLayouts)
+                rebuildPopoverContent()
+                if (label !== null && currentLayouts.length > 0) {
+                    label.set_label(langLabel(matchLayoutToCode(currentLayouts, currentLayouts[0])))
+                }
+            })
+            if (menuBtn !== null) {
+                menuBtn.popdown()
+            }
+        })
+        box.append(addBtn)
+    }
+
+    hyprland.connect('keyboard-layout', (_: AstalHyprland.Hyprland, _kbName: string, layoutName: string) => {
+        if (label === null) {
+            return
+        }
+        const code = matchLayoutToCode(currentLayouts, layoutName)
+        label.set_label(langLabel(code))
+    })
+
+    return (
+        <menubutton
+            class="language"
+            $={(self: Gtk.MenuButton) => { menuBtn = self }}
+        >
+            <label
+                class="language-label"
+                label={initialLabel}
+                halign={Gtk.Align.CENTER}
+                $={(self: Gtk.Label) => { label = self }}
+            />
+            <popover class="hyprbobr-lang-popover">
+                <box
+                    orientation={Gtk.Orientation.VERTICAL}
+                    spacing={2}
+                    $={(self: Gtk.Box) => {
+                        popoverBox = self
+                        rebuildPopoverContent()
+                    }}
+                />
+            </popover>
+        </menubutton>
+    )
+}
+
 export default function Bar(gdkmonitor: Gdk.Monitor) {
     const time = createPoll('', 1000, 'date "+%a, %b %-d  %-I:%M %p"')
 
@@ -874,6 +1371,7 @@ export default function Bar(gdkmonitor: Gdk.Monitor) {
                 <Workspaces />
                 <box $type="end" spacing={8} hexpand halign={Gtk.Align.END} class="with-dividers">
                     <Tray />
+                    <LanguageIndicator />
                     <menubutton class="time">
                         <label class="time-label" label={time} />
                         <popover class="hyprbobr-time-popover">

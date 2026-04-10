@@ -114,6 +114,30 @@ button {
     padding: 0;
     min-width: 180px;
 }
+.language-label {
+    padding: 0;
+    min-width: 24px;
+}
+.lang-add-btn {
+    color: #ffffffaa;
+    font-size: 18px;
+    padding: 2px 8px;
+
+    &:hover {
+        color: #ffffffff;
+    }
+}
+.lang-manager-list {
+    background: transparent;
+
+    row {
+        border-radius: 4px;
+
+        &:hover {
+            background: #ffffff14;
+        }
+    }
+}
 
 // Volume indicator
 .volume-indicator {
