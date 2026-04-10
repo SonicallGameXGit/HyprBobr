@@ -9,6 +9,11 @@ import GLib from 'gi://GLib'
 import Gio from 'gi://Gio'
 import GioUnix from 'gi://GioUnix'
 import type Cairo from 'cairo'
+import { exec } from 'ags/process'
+import { readFile, writeFile } from 'ags/file'
+
+const HOME = GLib.get_home_dir()
+const LAYOUT_FILE = `${HOME}/.config/hypr/keyboard-layouts.conf`
 
 type WorkspaceBounds = {
     x: number
@@ -839,6 +844,7 @@ type KeyboardState = {
     layouts: string[]
     activeKeymap: string
     activeCode: string
+    activeIndex: number
 }
 
 const XKB_DISPLAY_HINTS: Record<string, string[]> = {
@@ -1055,8 +1061,9 @@ function fetchKeyboardState(): KeyboardState | null {
         const layouts = layoutStr.split(',').map((l: string) => l.trim()).filter((l: string) => l !== '')
         const activeKeymap = typeof kb.active_keymap === 'string' ? kb.active_keymap : ''
         const name = typeof kb.name === 'string' ? kb.name : ''
-        const activeCode = matchLayoutToCode(layouts, activeKeymap)
-        return { name, layouts, activeKeymap, activeCode }
+        const activeIndex = typeof kb.active_layout_index === 'number' ? kb.active_layout_index : 0
+        const activeCode = layouts[activeIndex] ?? (layouts[0] ?? '')
+        return { name, layouts, activeKeymap, activeCode, activeIndex }
     } catch {
         return null
     }
@@ -1075,33 +1082,115 @@ function fetchAllLayouts(): string[] {
     }
 }
 
-function hyprlandConfigPath(): string | null {
-    const configDir = GLib.get_user_config_dir()
-    const path = configDir + '/hypr/hyprland.conf'
-    if (GLib.file_test(path, GLib.FileTest.EXISTS)) {
-        return path
+function readLayoutFileLayouts(): string[] {
+    try {
+        const content = readFile(LAYOUT_FILE)
+        const match = content.match(/kb_layout\s*=\s*([^\n}]+)/)
+        if (match === null || match[1] === undefined) {
+            return []
+        }
+        return match[1].split(',').map((l: string) => l.trim()).filter((l: string) => l !== '')
+    } catch {
+        return []
     }
-    return null
 }
 
-function applyLayouts(newLayouts: string[]) {
-    const layoutStr = newLayouts.join(',')
-    GLib.spawn_command_line_async(`hyprctl keyword input:kb_layout ${layoutStr}`)
-    const configPath = hyprlandConfigPath()
-    if (configPath === null) {
-        return
-    }
-    try {
-        const [readOk, contents] = GLib.file_get_contents(configPath)
-        if (!readOk || contents === null) {
+function openAutoResolverDialog(layouts: string[], onFixed: (newLayouts: string[]) => void) {
+    const resolverDialog = new Adw.Dialog()
+    resolverDialog.contentWidth = 320
+    resolverDialog.contentHeight = 400
+
+    type RowMeta = { row: Gtk.ListBoxRow, code: string, check: Gtk.CheckButton }
+    const rows: RowMeta[] = []
+
+    let fixBtn: Gtk.Button | null = null
+
+    const updateFixBtn = () => {
+        if (fixBtn === null) {
             return
         }
-        const text = new TextDecoder().decode(contents)
-        const newText = text.replace(/([ \t]*kb_layout[ \t]*=[ \t]*)([^\n]*)/, `$1${layoutStr}`)
-        GLib.file_set_contents(configPath, newText)
-    } catch {
-        // silently ignore config write errors
+        const checkedCount = rows.filter((m) => m.check.active).length
+        fixBtn.sensitive = checkedCount <= 4
     }
+
+    const content = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL })
+
+    const header = new Gtk.Label({ label: `Too many layouts (${layouts.length}/4) — remove some:` })
+    header.halign = Gtk.Align.START
+    header.marginStart = 12
+    header.marginEnd = 12
+    header.marginTop = 12
+    header.marginBottom = 8
+    content.append(header)
+
+    const listBox = new Gtk.ListBox()
+    listBox.selectionMode = Gtk.SelectionMode.NONE
+    listBox.add_css_class('lang-manager-list')
+
+    for (const code of layouts) {
+        const isUs = code.toLowerCase() === 'us'
+        const row = new Gtk.ListBoxRow()
+        row.set_activatable(!isUs)
+        const rowBox = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 8 })
+        rowBox.marginStart = 10
+        rowBox.marginEnd = 10
+        rowBox.marginTop = 4
+        rowBox.marginBottom = 4
+        const flag = codeToFlag(code)
+        if (flag !== '') {
+            rowBox.append(new Gtk.Label({ label: flag }))
+        }
+        const nameLbl = new Gtk.Label({ label: langDisplayName(code) })
+        nameLbl.halign = Gtk.Align.START
+        nameLbl.hexpand = true
+        rowBox.append(nameLbl)
+        const check = new Gtk.CheckButton()
+        check.active = true
+        check.sensitive = !isUs
+        check.connect('toggled', () => { updateFixBtn() })
+        rowBox.append(check)
+        row.set_child(rowBox)
+        listBox.append(row)
+        rows.push({ row, code, check })
+    }
+
+    listBox.connect('row-activated', (_lb: Gtk.ListBox, activatedRow: Gtk.ListBoxRow) => {
+        const meta = rows.find((m) => m.row === activatedRow)
+        if (meta === undefined) {
+            return
+        }
+        meta.check.active = !meta.check.active
+    })
+
+    const scrolled = new Gtk.ScrolledWindow()
+    scrolled.vexpand = true
+    scrolled.set_child(listBox)
+    content.append(scrolled)
+
+    const sep = new Gtk.Separator()
+    content.append(sep)
+
+    fixBtn = new Gtk.Button({ label: 'Fix' })
+    fixBtn.add_css_class('suggested-action')
+    fixBtn.sensitive = false
+    fixBtn.connect('clicked', () => {
+        const checked = rows.filter((m) => m.check.active).map((m) => m.code.toLowerCase())
+        const others = checked.filter((c) => c !== 'us')
+        onFixed(['us', ...others])
+        resolverDialog.force_close()
+    })
+
+    const btnRow = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 8 })
+    btnRow.halign = Gtk.Align.END
+    btnRow.marginTop = 8
+    btnRow.marginBottom = 8
+    btnRow.marginStart = 8
+    btnRow.marginEnd = 8
+    btnRow.append(fixBtn)
+    content.append(btnRow)
+
+    resolverDialog.set_child(content)
+    resolverDialog.present(app.get_active_window())
 }
 
 function openLanguageManagerDialog(
@@ -1110,8 +1199,13 @@ function openLanguageManagerDialog(
     onApply: (newLayouts: string[]) => void
 ) {
     const allLayouts = fetchAllLayouts()
-    const originalSet = new Set(currentLayouts.map((l: string) => l.toLowerCase()))
-    const checkedSet = new Set(originalSet)
+    const initial = currentLayouts.map((l: string) => l.toLowerCase())
+    if (!initial.includes('us')) {
+        initial.unshift('us')
+    }
+    const originalSet = new Set(initial)
+    let copyList: string[] = [...initial]
+    let syncing = false
 
     let applyBtn: Gtk.Button | null = null
 
@@ -1119,8 +1213,9 @@ function openLanguageManagerDialog(
         if (applyBtn === null) {
             return
         }
-        const added = [...checkedSet].filter((c) => !originalSet.has(c)).length
-        const removed = [...originalSet].filter((c) => !checkedSet.has(c)).length
+        const copySet = new Set(copyList)
+        const added = [...copySet].filter((c) => !originalSet.has(c)).length
+        const removed = [...originalSet].filter((c) => !copySet.has(c)).length
         const parts: string[] = []
         if (added > 0) {
             parts.push(`+${added}`)
@@ -1146,11 +1241,154 @@ function openLanguageManagerDialog(
     listBox.selectionMode = Gtk.SelectionMode.NONE
     listBox.add_css_class('lang-manager-list')
 
-    type RowMeta = { row: Gtk.ListBoxRow, code: string }
+    type RowMeta = { row: Gtk.ListBoxRow, code: string, check: Gtk.CheckButton }
     const rows: RowMeta[] = []
 
+    const syncCheckboxesToCopyList = () => {
+        syncing = true
+        for (const { code, check } of rows) {
+            check.active = copyList.includes(code.toLowerCase())
+        }
+        syncing = false
+        updateApplyLabel()
+    }
+
+    const openResolverDialog = (newCode: string) => {
+        const resolverDialog = new Adw.Dialog()
+        resolverDialog.contentWidth = 320
+        resolverDialog.contentHeight = 380
+
+        type ResolverRowMeta = { row: Gtk.ListBoxRow, code: string, check: Gtk.CheckButton }
+        const resolverRows: ResolverRowMeta[] = []
+
+        let resolverFixBtn: Gtk.Button | null = null
+
+        const updateResolverFixBtn = () => {
+            if (resolverFixBtn === null) {
+                return
+            }
+            // existing checked items + newCode itself must be <= 4
+            const checkedCount = resolverRows.filter((m) => m.check.active).length
+            resolverFixBtn.sensitive = checkedCount + 1 <= 4
+        }
+
+        const resolverContent = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL })
+
+        const addingHeader = new Gtk.Label({ label: 'Too many layouts — adding:' })
+        addingHeader.halign = Gtk.Align.START
+        addingHeader.marginStart = 12
+        addingHeader.marginEnd = 12
+        addingHeader.marginTop = 12
+        addingHeader.marginBottom = 4
+        resolverContent.append(addingHeader)
+
+        const newLangBox = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 8 })
+        newLangBox.marginStart = 12
+        newLangBox.marginEnd = 12
+        newLangBox.marginTop = 0
+        newLangBox.marginBottom = 10
+        const newFlag = codeToFlag(newCode)
+        if (newFlag !== '') {
+            newLangBox.append(new Gtk.Label({ label: newFlag }))
+        }
+        const newNameLbl = new Gtk.Label({ label: langDisplayName(newCode) })
+        newNameLbl.halign = Gtk.Align.START
+        newLangBox.append(newNameLbl)
+        resolverContent.append(newLangBox)
+
+        const sep1 = new Gtk.Separator()
+        resolverContent.append(sep1)
+
+        const removeHeader = new Gtk.Label({ label: 'Remove one to make room:' })
+        removeHeader.halign = Gtk.Align.START
+        removeHeader.marginStart = 12
+        removeHeader.marginEnd = 12
+        removeHeader.marginTop = 8
+        removeHeader.marginBottom = 4
+        resolverContent.append(removeHeader)
+
+        const resolverListBox = new Gtk.ListBox()
+        resolverListBox.selectionMode = Gtk.SelectionMode.NONE
+        resolverListBox.add_css_class('lang-manager-list')
+
+        for (const code of copyList.filter((c) => c !== newCode)) {
+            const isUs = code === 'us'
+            const row = new Gtk.ListBoxRow()
+            row.set_activatable(!isUs)
+            const rowBox = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 8 })
+            rowBox.marginStart = 10
+            rowBox.marginEnd = 10
+            rowBox.marginTop = 4
+            rowBox.marginBottom = 4
+            const flag = codeToFlag(code)
+            if (flag !== '') {
+                rowBox.append(new Gtk.Label({ label: flag }))
+            }
+            const nameLbl = new Gtk.Label({ label: langDisplayName(code) })
+            nameLbl.halign = Gtk.Align.START
+            nameLbl.hexpand = true
+            rowBox.append(nameLbl)
+            const check = new Gtk.CheckButton()
+            check.active = true
+            check.sensitive = !isUs
+            check.connect('toggled', () => { updateResolverFixBtn() })
+            rowBox.append(check)
+            row.set_child(rowBox)
+            resolverListBox.append(row)
+            resolverRows.push({ row, code, check })
+        }
+
+        resolverListBox.connect('row-activated', (_lb: Gtk.ListBox, activatedRow: Gtk.ListBoxRow) => {
+            const meta = resolverRows.find((m) => m.row === activatedRow)
+            if (meta === undefined) {
+                return
+            }
+            meta.check.active = !meta.check.active
+        })
+
+        const resolverScrolled = new Gtk.ScrolledWindow()
+        resolverScrolled.vexpand = true
+        resolverScrolled.set_child(resolverListBox)
+        resolverContent.append(resolverScrolled)
+
+        const sep2 = new Gtk.Separator()
+        resolverContent.append(sep2)
+
+        const cancelResolverBtn = new Gtk.Button({ label: 'Cancel' })
+        cancelResolverBtn.connect('clicked', () => {
+            copyList = copyList.filter((c) => c !== newCode)
+            syncCheckboxesToCopyList()
+            resolverDialog.force_close()
+        })
+
+        resolverFixBtn = new Gtk.Button({ label: 'Fix' })
+        resolverFixBtn.add_css_class('suggested-action')
+        resolverFixBtn.sensitive = false
+        resolverFixBtn.connect('clicked', () => {
+            const toRemove = new Set(resolverRows.filter((m) => !m.check.active).map((m) => m.code))
+            copyList = copyList.filter((c) => !toRemove.has(c))
+            syncCheckboxesToCopyList()
+            resolverDialog.force_close()
+        })
+
+        const resolverBtnRow = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 8 })
+        resolverBtnRow.halign = Gtk.Align.END
+        resolverBtnRow.marginTop = 8
+        resolverBtnRow.marginBottom = 8
+        resolverBtnRow.marginStart = 8
+        resolverBtnRow.marginEnd = 8
+        resolverBtnRow.append(cancelResolverBtn)
+        resolverBtnRow.append(resolverFixBtn)
+        resolverContent.append(resolverBtnRow)
+
+        resolverDialog.set_child(resolverContent)
+        resolverDialog.present(app.get_active_window())
+    }
+
     for (const code of allLayouts) {
+        const isUs = code.toLowerCase() === 'us'
         const row = new Gtk.ListBoxRow()
+        row.set_activatable(!isUs)
         const rowBox = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 8 })
         rowBox.marginStart = 10
         rowBox.marginEnd = 10
@@ -1170,13 +1408,25 @@ function openLanguageManagerDialog(
         rowBox.append(nameLbl)
 
         const check = new Gtk.CheckButton()
-        check.active = checkedSet.has(code.toLowerCase())
+        check.active = copyList.includes(code.toLowerCase())
+        check.sensitive = !isUs
         check.connect('toggled', () => {
+            if (syncing) {
+                return
+            }
             const lower = code.toLowerCase()
             if (check.active) {
-                checkedSet.add(lower)
+                if (!copyList.includes(lower)) {
+                    copyList = [...copyList, lower]
+                }
+                if (copyList.length > 4) {
+                    syncing = true
+                    check.active = false
+                    syncing = false
+                    openResolverDialog(lower)
+                }
             } else {
-                checkedSet.delete(lower)
+                copyList = copyList.filter((c) => c !== lower)
             }
             updateApplyLabel()
         })
@@ -1184,14 +1434,15 @@ function openLanguageManagerDialog(
 
         row.set_child(rowBox)
         listBox.append(row)
-        rows.push({ row, code })
+        rows.push({ row, code, check })
     }
 
-    searchEntry.connect('search-changed', () => {
-        const q = searchEntry.text.toLowerCase()
-        for (const { row, code } of rows) {
-            row.visible = q === '' || langSearchTerms(code).some((t) => t.includes(q))
+    listBox.connect('row-activated', (_lb: Gtk.ListBox, activatedRow: Gtk.ListBoxRow) => {
+        const meta = rows.find((r) => r.row === activatedRow)
+        if (meta === undefined) {
+            return
         }
+        meta.check.active = !meta.check.active
     })
 
     const scrolled = new Gtk.ScrolledWindow()
@@ -1207,21 +1458,53 @@ function openLanguageManagerDialog(
     applyBtn = new Gtk.Button({ label: 'Apply' })
     applyBtn.add_css_class('suggested-action')
     applyBtn.connect('clicked', () => {
-        const newLayouts = allLayouts.filter((code) => checkedSet.has(code.toLowerCase()))
+        const others = copyList.filter((c) => c !== 'us')
+        const newLayouts = ['us', ...others]
         onApply(newLayouts)
         dialog.force_close()
     })
 
     updateApplyLabel()
 
+    let filterActive = false
+
+    const applyRowFilter = () => {
+        const q = searchEntry.text.toLowerCase()
+        for (const { row, code } of rows) {
+            const matchesSearch = q === '' || langSearchTerms(code).some((t) => t.includes(q))
+            const matchesFilter = !filterActive || originalSet.has(code.toLowerCase())
+            row.visible = matchesSearch && matchesFilter
+        }
+    }
+
+    searchEntry.connect('search-changed', () => { applyRowFilter() })
+
+    const filterBtn = new Gtk.ToggleButton()
+    filterBtn.add_css_class('lang-filter-btn')
+    filterBtn.set_child(new Gtk.Image({ iconName: 'format-justify-fill-symbolic', pixelSize: 16 }))
+    filterBtn.connect('toggled', () => {
+        filterActive = filterBtn.active
+        applyRowFilter()
+    })
+
     const btnRow = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 8 })
-    btnRow.halign = Gtk.Align.END
     btnRow.marginTop = 8
     btnRow.marginBottom = 8
     btnRow.marginStart = 8
     btnRow.marginEnd = 8
-    btnRow.append(cancelBtn)
-    btnRow.append(applyBtn)
+
+    const btnLeft = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 0 })
+    btnLeft.halign = Gtk.Align.START
+    btnLeft.hexpand = true
+    btnLeft.append(filterBtn)
+
+    const btnRight = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 8 })
+    btnRight.halign = Gtk.Align.END
+    btnRight.append(cancelBtn)
+    btnRight.append(applyBtn)
+
+    btnRow.append(btnLeft)
+    btnRow.append(btnRight)
 
     const sep = new Gtk.Separator()
 
@@ -1232,20 +1515,45 @@ function openLanguageManagerDialog(
     content.append(btnRow)
 
     dialog.set_child(content)
-    dialog.present(parent)
+    dialog.present(app.get_active_window())
 }
 
 function LanguageIndicator() {
     const hyprland = AstalHyprland.get_default()
-    const kbState = fetchKeyboardState()
     let label: Gtk.Label | null = null
     let menuBtn: Gtk.MenuButton | null = null
     let popoverBox: Gtk.Box | null = null
-    let currentLayouts: string[] = kbState !== null ? kbState.layouts : []
-    const kbName = kbState !== null ? kbState.name : ''
-    const initialLabel = kbState !== null ? langLabel(kbState.activeCode) : '--'
+    const initialKbState = fetchKeyboardState()
+    let currentLayouts: string[] = initialKbState !== null ? initialKbState.layouts : []
+    let activeCode = initialKbState !== null ? initialKbState.activeCode : (currentLayouts[0] ?? '')
+    const initialLabel = langLabel(activeCode)
+
+    GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+        const fileLayouts = readLayoutFileLayouts()
+        if (fileLayouts.length > 4) {
+            openAutoResolverDialog(fileLayouts, (fixed) => {
+                currentLayouts = fixed
+                writeFile(LAYOUT_FILE, `input {\n    kb_layout = ${fixed.join(',')}\n}`)
+                exec('hyprctl reload')
+            })
+        }
+        return GLib.SOURCE_REMOVE
+    })
+
+    const refreshLayouts = () => {
+        const state = fetchKeyboardState()
+        if (state === null) {
+            return
+        }
+        currentLayouts = state.layouts
+        activeCode = state.activeCode
+    }
 
     const rebuildPopoverContent = () => {
+        refreshLayouts()
+        if (label !== null) {
+            label.set_label(langLabel(activeCode))
+        }
         if (popoverBox === null) {
             return
         }
@@ -1262,12 +1570,20 @@ function LanguageIndicator() {
             const btn = new Gtk.Button()
             btn.hexpand = true
             btn.add_css_class('lang-item')
-            const lbl = new Gtk.Label({ label: langLabel(code) })
-            lbl.halign = Gtk.Align.CENTER
-            lbl.hexpand = true
-            btn.set_child(lbl)
+            if (code.toLowerCase() === activeCode.toLowerCase()) {
+                btn.add_css_class('lang-item-active')
+            }
+            const itemBox = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 6 })
+            itemBox.hexpand = true
+            itemBox.halign = Gtk.Align.START
+            const flagLbl = new Gtk.Label({ label: langLabel(code) })
+            itemBox.append(flagLbl)
+            const nameLbl = new Gtk.Label({ label: langDisplayName(code) })
+            nameLbl.add_css_class('lang-item-name')
+            itemBox.append(nameLbl)
+            btn.set_child(itemBox)
             btn.connect('clicked', () => {
-                GLib.spawn_command_line_async(`hyprctl switchxkblayout ${kbName} ${index}`)
+                exec(`hyprctl switchxkblayout all ${index}`)
                 if (menuBtn !== null) {
                     menuBtn.popdown()
                 }
@@ -1285,11 +1601,10 @@ function LanguageIndicator() {
         addBtn.connect('clicked', () => {
             openLanguageManagerDialog(addBtn, currentLayouts, (newLayouts) => {
                 currentLayouts = newLayouts
-                applyLayouts(newLayouts)
+                const layoutStr = newLayouts.join(',')
+                writeFile(LAYOUT_FILE, `input {\n    kb_layout = ${layoutStr}\n}`)
+                exec('hyprctl reload')
                 rebuildPopoverContent()
-                if (label !== null && currentLayouts.length > 0) {
-                    label.set_label(langLabel(matchLayoutToCode(currentLayouts, currentLayouts[0])))
-                }
             })
             if (menuBtn !== null) {
                 menuBtn.popdown()
@@ -1298,12 +1613,25 @@ function LanguageIndicator() {
         box.append(addBtn)
     }
 
-    hyprland.connect('keyboard-layout', (_: AstalHyprland.Hyprland, _kbName: string, layoutName: string) => {
+    hyprland.connect('keyboard-layout', () => {
         if (label === null) {
             return
         }
-        const code = matchLayoutToCode(currentLayouts, layoutName)
-        label.set_label(langLabel(code))
+        const state = fetchKeyboardState()
+        if (state === null) {
+            return
+        }
+        currentLayouts = state.layouts
+        activeCode = state.activeCode
+        label.set_label(langLabel(activeCode))
+        const fileLayouts = readLayoutFileLayouts()
+        if (fileLayouts.length > 4) {
+            openAutoResolverDialog(fileLayouts, (fixed) => {
+                currentLayouts = fixed
+                writeFile(LAYOUT_FILE, `input {\n    kb_layout = ${fixed.join(',')}\n}`)
+                exec('hyprctl reload')
+            })
+        }
     })
 
     return (
@@ -1317,7 +1645,16 @@ function LanguageIndicator() {
                 halign={Gtk.Align.CENTER}
                 $={(self: Gtk.Label) => { label = self }}
             />
-            <popover class="hyprbobr-lang-popover">
+            <popover
+                class="hyprbobr-lang-popover"
+                $={(self: Gtk.Popover) => {
+                    self.connect('notify::visible', () => {
+                        if (self.visible) {
+                            rebuildPopoverContent()
+                        }
+                    })
+                }}
+            >
                 <box
                     orientation={Gtk.Orientation.VERTICAL}
                     spacing={2}

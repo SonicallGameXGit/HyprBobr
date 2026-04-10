@@ -118,6 +118,29 @@ button {
     padding: 0;
     min-width: 24px;
 }
+.lang-item {
+    padding: 2px 8px;
+
+    &:hover {
+        background: #ffffff14;
+    }
+}
+.lang-item-name {
+    font-size: 12px;
+    color: #ffffffbb;
+}
+.lang-item-active {
+    background: #ffffff1e;
+}
+.lang-filter-btn {
+    padding: 4px 6px;
+    color: #ffffffaa;
+
+    &:checked {
+        color: #ffffffff;
+        background: #ffffff22;
+    }
+}
 .lang-add-btn {
     color: #ffffffaa;
     font-size: 18px;
