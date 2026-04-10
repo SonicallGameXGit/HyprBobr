@@ -19,7 +19,7 @@ An elegant design implementation for Hyprland featuring a comprehensive suite of
 
 Add the following lines to your `~/.config/hypr/hyprland.conf`:
 
-```
+```ini
 # Hyprbobr Configuration
 layerrule = blur on, match:namespace hyprbobr-bar
 layerrule = blur on, match:namespace hyprbobr-volume
