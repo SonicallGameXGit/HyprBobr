@@ -24,9 +24,9 @@ Add the following lines to your `~/.config/hypr/hyprland.conf`:
 layerrule = blur on, match:namespace hyprbobr-bar
 layerrule = blur on, match:namespace hyprbobr-volume
 layerrule = blur on, match:namespace hyprbobr-notifications
-layerrule = ignore_alpha 0.3, match:namespace hyprbobr-bar
-layerrule = ignore_alpha 0.3, match:namespace hyprbobr-volume
-layerrule = ignore_alpha 0.3, match:namespace hyprbobr-notifications
+layerrule = ignore_alpha 0.1, match:namespace hyprbobr-bar
+layerrule = ignore_alpha 0.1, match:namespace hyprbobr-volume
+layerrule = ignore_alpha 0.26, match:namespace hyprbobr-notifications
 ```
 
 ### Keyboard Layout (Language Indicator)

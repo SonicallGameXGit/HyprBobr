@@ -2,8 +2,8 @@
 // $fg-color: #{"@theme_fg_color"};
 // $bg-color: #{"@theme_bg_color"};
 
-$bg-color: #00000044;
-$bg-color-dark: #00000066;
+$bg-color: #00000077;
+$bg-color-dark: #00000099;
 $fg-color: #ffffffff;
 
 // Bar
@@ -187,11 +187,123 @@ button {
 }
 
 // Notifications
+.notifications {
+    background: transparent;
+    border: none;
+    border-radius: 0;
+}
 .notification {
-    background: $bg-color;
+    background: linear-gradient(to bottom, $bg-color, $bg-color-dark);
     color: $fg-color;
-    border: #aaaaaa66 2px solid;
     border-radius: 8px;
-    padding: 12px;
-    margin-bottom: 8px;
+    border-bottom: #9b9b9b66 1px solid;
+    box-shadow: 0 4px 24px 0 #00000066, 0 1px 4px 0 #00000044;
+}
+.notification-card {
+    background: transparent;
+    border-radius: 8px;
+    padding: 0;
+
+    &:hover {
+        background: #ffffff0a;
+    }
+
+    &:active {
+        background: #ffffff15;
+        transition: background 0.08s;
+    }
+}
+.notification-card.notification-card-has-actions {
+    border-radius: 8px 8px 0 0;
+}
+.notification-titlebar {
+    padding: 8px 12px 4px;
+}
+.notification-app-icon {
+    opacity: 0.75;
+}
+.notification-app-name {
+    font-size: 15px;
+    font-weight: bold;
+    opacity: 0.75;
+}
+.notification-content {
+    padding: 4px 12px 10px;
+}
+.notification-summary {
+    font-size: 12px;
+    font-weight: bold;
+}
+.notification-body {
+    font-size: 12px;
+    font-weight: normal;
+    opacity: 0.85;
+}
+.notification-image {
+    border-radius: 4px;
+    min-width: 64px;
+    min-height: 64px;
+}
+.notification-actions {
+    border-top: 1px solid #ffffff22;
+    border-radius: 0 0 8px 8px;
+}
+.notification-actions.notification-actions-has-extra {
+    border-radius: 0;
+}
+.notification-actions-extra {
+    border-radius: 0 0 8px 8px;
+}
+.notification-action {
+    padding: 7px 12px;
+    border-radius: 0;
+    background: transparent;
+    font-size: 13px;
+
+    & + .notification-action {
+        border-left: 1px solid #ffffff14;
+    }
+
+    &:hover {
+        background: #ffffff18;
+    }
+
+    &:active {
+        background: #ffffff2a;
+        transition: background 0.08s;
+    }
+}
+.notification-action-primary {
+    color: #6db3f2;
+
+    &:hover {
+        background: #6db3f218;
+    }
+
+    &:active {
+        background: #6db3f22a;
+    }
+}
+.notification-action-danger {
+    color: #f28b82;
+
+    &:hover {
+        background: #f28b8218;
+    }
+
+    &:active {
+        background: #f28b822a;
+    }
+}
+.notification-action-secondary {
+    color: #cccccccc;
+
+    &:hover {
+        background: #ffffff18;
+    }
+
+    &:active {
+        background: #ffffff2a;
+        transition: background 0.08s;
+    }
 }
