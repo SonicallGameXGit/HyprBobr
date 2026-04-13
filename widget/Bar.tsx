@@ -615,7 +615,7 @@ function Workspaces() {
         cr.fill()
 
         appendRoundedRectangle(cr, bubbleX, bubbleY, bubbleWidth, bubbleHeight, bubbleRadius)
-        cr.setSourceRGBA(1, 1, 1, 0.22)
+        cr.setSourceRGBA(1, 1, 1, 0.01)
         cr.fillPreserve()
         cr.setSourceRGBA(1, 1, 1, 0.32)
         cr.setLineWidth(1)
