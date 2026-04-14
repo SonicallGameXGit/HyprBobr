@@ -42,6 +42,7 @@ export default function VolumeIndicator() {
     let isHovered = false
     let isDragging = false
     let isHoveredZone = false
+    let hoverZoneTimeoutId: number | null = null
 
     const queueDraw = () => {
         if (drawArea !== null) {
@@ -368,6 +369,11 @@ export default function VolumeIndicator() {
 
             cancelHide()
 
+            if (hoverZoneTimeoutId !== null) {
+                GLib.source_remove(hoverZoneTimeoutId)
+                hoverZoneTimeoutId = null
+            }
+
             if (animation !== null) {
                 animation.reset()
                 animation = null
@@ -383,10 +389,23 @@ export default function VolumeIndicator() {
         motion.connect('enter', () => {
             isHoveredZone = true
             cancelHide()
-            slideIn()
+            if (hoverZoneTimeoutId !== null) {
+                GLib.source_remove(hoverZoneTimeoutId)
+            }
+            hoverZoneTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 400, () => {
+                hoverZoneTimeoutId = null
+                if (isHoveredZone) {
+                    slideIn()
+                }
+                return GLib.SOURCE_REMOVE
+            })
         })
         motion.connect('leave', () => {
             isHoveredZone = false
+            if (hoverZoneTimeoutId !== null) {
+                GLib.source_remove(hoverZoneTimeoutId)
+                hoverZoneTimeoutId = null
+            }
             if (!isHovered && !isDragging) {
                 scheduleHide()
             }
