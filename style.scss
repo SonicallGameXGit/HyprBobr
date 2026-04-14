@@ -307,3 +307,50 @@ button {
         transition: background 0.08s;
     }
 }
+.workspace-app-popup {
+    padding: 0;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+
+    contents {
+        border: none;
+        box-shadow: none;
+        padding: 0;
+        border-radius: 8px;
+    }
+}
+.workspace-app-row {
+    padding: 6px 12px;
+    border-radius: 4px;
+
+    label {
+        font-size: 13px;
+    }
+
+    &:hover {
+        background: #ffffff18;
+
+        .workspace-close-btn {
+            opacity: 1;
+        }
+    }
+}
+.workspace-close-btn {
+    opacity: 0;
+    border-radius: 4px;
+    padding: 2px;
+    transition: opacity 120ms, background 80ms;
+
+    &:hover {
+        background: #ffffff28;
+    }
+
+    &:active {
+        background: #ffffff44;
+    }
+}
+.workspace-drop-highlight {
+    background: #ffffff22;
+    border-radius: 4px;
+}

@@ -8,6 +8,7 @@ import Adw from 'gi://Adw'
 import GLib from 'gi://GLib'
 import Gio from 'gi://Gio'
 import GioUnix from 'gi://GioUnix'
+import GObject from 'gi://GObject'
 import type Cairo from 'cairo'
 import { exec } from 'ags/process'
 import { readFile, writeFile } from 'ags/file'
@@ -286,6 +287,312 @@ function Workspaces() {
     let pendingIconSyncSourceId: number | null = null
     let periodicIconSyncSourceId: number | null = null
     const workspaceBoundsCache = new Map<number, WorkspaceBounds>()
+    let sharedPopover: Gtk.Popover | null = null
+    let sharedPopoverBox: Gtk.Box | null = null
+    const sharedPopoverRevealers = new Map<string, Gtk.Revealer>()
+    let currentPopoverWorkspaceId: number | null = null
+    let popoverSpringAnim: Adw.SpringAnimation | null = null
+    let popoverFadeAnim: Adw.TimedAnimation | null = null
+    let hideTimerId: number | null = null
+    let isDragging = false
+    let draggingFromWorkspace: number | null = null
+    let draggingAddress: string | null = null
+    let dragMoved = false
+
+    const cancelHidePopover = () => {
+        if (hideTimerId !== null) {
+            GLib.source_remove(hideTimerId)
+            hideTimerId = null
+        }
+    }
+
+    const scheduleHidePopover = () => {
+        cancelHidePopover()
+        hideTimerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 400, () => {
+            hideTimerId = null
+            if (isDragging) {
+                return GLib.SOURCE_REMOVE
+            }
+            hideSharedPopover()
+            return GLib.SOURCE_REMOVE
+        })
+    }
+
+    const buildWorkspacePopover = (workspaceId: number) => {
+        const box = sharedPopoverBox
+        if (box === null) {
+            return
+        }
+
+        sharedPopoverRevealers.clear()
+
+        let child = box.get_first_child()
+        while (child !== null) {
+            const next = child.get_next_sibling()
+            box.remove(child)
+            child = next
+        }
+
+        const workspace = hyprland.workspaces.find((ws) => ws.id === workspaceId) ?? null
+        if (workspace === null) {
+            return
+        }
+
+        for (const client of workspace.clients) {
+            const row = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 6 })
+            row.add_css_class('workspace-app-row')
+            row.marginTop = 2
+            row.marginBottom = 2
+            row.marginStart = 4
+            row.marginEnd = 4
+
+            const iconWidget = new Gtk.Image({ pixelSize: 18 })
+            const cls = (client.initialClass !== null && client.initialClass !== undefined && client.initialClass !== '')
+                ? client.initialClass
+                : (client.class !== null && client.class !== undefined && client.class !== '' ? client.class : null)
+            if (cls !== null) {
+                iconWidget.set_from_gicon(lookupAppIcon(cls))
+            } else {
+                iconWidget.set_from_gicon(Gio.ThemedIcon.new('application-x-executable'))
+            }
+
+            const nameLabel = new Gtk.Label({ label: getClientDisplayName(client) })
+            nameLabel.halign = Gtk.Align.START
+            nameLabel.hexpand = true
+
+            const closeArea = new Gtk.Box({ valign: Gtk.Align.CENTER })
+            closeArea.add_css_class('workspace-close-btn')
+            const closeIcon = new Gtk.Image({ pixelSize: 12 })
+            closeIcon.set_from_gicon(Gio.ThemedIcon.new('window-close-symbolic'))
+            closeArea.append(closeIcon)
+
+            row.append(iconWidget)
+            row.append(nameLabel)
+            row.append(closeArea)
+
+            const clientAddress = client.address
+            const dragSource = new Gtk.DragSource({ actions: Gdk.DragAction.MOVE })
+            dragSource.connect('prepare', () => {
+                return Gdk.ContentProvider.new_for_value(clientAddress)
+            })
+            dragSource.connect('drag-begin', () => {
+                isDragging = true
+                draggingFromWorkspace = workspaceId
+                draggingAddress = clientAddress
+                const paint = Gtk.WidgetPaintable.new(row)
+                dragSource.set_icon(paint, 0, 0)
+                const rev = sharedPopoverRevealers.get(clientAddress)
+                if (rev !== undefined) {
+                    rev.revealChild = false
+                }
+            })
+            dragSource.connect('drag-end', () => {
+                isDragging = false
+                const wasMoved = dragMoved
+                dragMoved = false
+                const fromWs = draggingFromWorkspace
+                draggingFromWorkspace = null
+                draggingAddress = null
+                if (wasMoved === false) {
+                    const rev = sharedPopoverRevealers.get(clientAddress)
+                    if (rev !== undefined) {
+                        rev.revealChild = true
+                    }
+                }
+                if (fromWs !== null) {
+                    scheduleHidePopover()
+                }
+            })
+            row.add_controller(dragSource)
+
+            let pressX = 0
+            let pressY = 0
+            const closeGesture = new Gtk.GestureClick()
+            closeGesture.set_button(Gdk.BUTTON_PRIMARY)
+            closeGesture.connect('pressed', (_self: Gtk.GestureClick, _n: number, x: number, y: number) => {
+                pressX = x
+                pressY = y
+            })
+            closeGesture.connect('released', (_self: Gtk.GestureClick, _n: number, x: number, y: number) => {
+                const dx = x - pressX
+                const dy = y - pressY
+                if (dx * dx + dy * dy < 64) {
+                    const rev = sharedPopoverRevealers.get(clientAddress)
+                    if (rev !== undefined) {
+                        collapseAndCheckClose(rev)
+                    }
+                    hyprland.dispatch('closewindow', `address:0x${clientAddress}`)
+                }
+            })
+            closeArea.add_controller(closeGesture)
+
+            const revealer = new Gtk.Revealer()
+            revealer.revealChild = true
+            revealer.transitionType = Gtk.RevealerTransitionType.SLIDE_UP
+            revealer.transitionDuration = 180
+            revealer.set_child(row)
+            sharedPopoverRevealers.set(clientAddress, revealer)
+
+            box.append(revealer)
+        }
+    }
+
+    const hideSharedPopover = () => {
+        if (sharedPopover === null || sharedPopover.visible === false) {
+            return
+        }
+        if (popoverSpringAnim !== null) {
+            popoverSpringAnim.reset()
+            popoverSpringAnim = null
+        }
+        if (popoverFadeAnim !== null) {
+            popoverFadeAnim.reset()
+            popoverFadeAnim = null
+        }
+        const pop = sharedPopover
+        const startOpacity = pop.opacity
+        const fadeOutTarget = Adw.CallbackAnimationTarget.new((v: number) => {
+            pop.opacity = v
+        })
+        const fadeOutAnim = Adw.TimedAnimation.new(pop, startOpacity, 0, 160, fadeOutTarget)
+        fadeOutAnim.easing = Adw.Easing.EASE_IN_QUAD
+        fadeOutAnim.connect('done', () => {
+            if (pop.visible === true) {
+                pop.popdown()
+                pop.opacity = 1
+            }
+        })
+        fadeOutAnim.play()
+        popoverFadeAnim = fadeOutAnim
+    }
+
+    const checkAutoClosePopover = () => {
+        for (const rev of sharedPopoverRevealers.values()) {
+            if (rev.revealChild === true) {
+                return
+            }
+        }
+        if (sharedPopoverRevealers.size > 0) {
+            hideSharedPopover()
+        }
+    }
+
+    const collapseAndCheckClose = (rev: Gtk.Revealer) => {
+        rev.revealChild = false
+        const handlerId = rev.connect('notify::child-revealed', () => {
+            if (rev.childRevealed === false) {
+                rev.disconnect(handlerId)
+                checkAutoClosePopover()
+            }
+        })
+    }
+
+    const showOrMoveSharedPopover = (workspaceId: number) => {
+        const button = workspaceButtons.get(workspaceId)
+        if (button === undefined) {
+            return
+        }
+        const workspace = hyprland.workspaces.find((ws) => ws.id === workspaceId) ?? null
+        if (workspace === null || workspace.clients.length === 0) {
+            return
+        }
+
+        if (sharedPopover === null) {
+            sharedPopover = new Gtk.Popover()
+            sharedPopover.autohide = false
+            sharedPopover.set_position(Gtk.PositionType.BOTTOM)
+            sharedPopover.add_css_class('workspace-app-popup')
+
+            sharedPopoverBox = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 2 })
+            sharedPopoverBox.marginTop = 5
+            sharedPopoverBox.marginBottom = 5
+            sharedPopoverBox.marginStart = 2
+            sharedPopoverBox.marginEnd = 2
+            sharedPopover.set_child(sharedPopoverBox)
+
+            const popoverMotion = new Gtk.EventControllerMotion()
+            popoverMotion.connect('enter', () => {
+                cancelHidePopover()
+            })
+            popoverMotion.connect('leave', () => {
+                if (isDragging === false) {
+                    scheduleHidePopover()
+                }
+            })
+            sharedPopover.add_controller(popoverMotion)
+        }
+
+        if (currentPopoverWorkspaceId === workspaceId && sharedPopover.visible) {
+            return
+        }
+
+        if (popoverSpringAnim !== null) {
+            popoverSpringAnim.reset()
+            popoverSpringAnim = null
+        }
+        if (popoverFadeAnim !== null) {
+            popoverFadeAnim.reset()
+            popoverFadeAnim = null
+        }
+
+        const wasVisible = sharedPopover.visible
+
+        let bounceFromX = 0
+        if (wasVisible && currentPopoverWorkspaceId !== null) {
+            const oldBounds = workspaceBoundsCache.get(currentPopoverWorkspaceId)
+            const newBounds = workspaceBoundsCache.get(workspaceId)
+            if (oldBounds !== undefined && newBounds !== undefined) {
+                bounceFromX = Math.round(
+                    (oldBounds.x + oldBounds.width / 2) - (newBounds.x + newBounds.width / 2)
+                )
+            }
+        }
+
+        sharedPopover.unparent()
+        sharedPopover.set_parent(button)
+        currentPopoverWorkspaceId = workspaceId
+
+        buildWorkspacePopover(workspaceId)
+
+        const pop = sharedPopover
+
+        if (wasVisible) {
+            pop.opacity = 1
+            pop.set_offset(bounceFromX, 0)
+            pop.popup()
+
+            const springTarget = Adw.CallbackAnimationTarget.new((v: number) => {
+                pop.set_offset(Math.round(lerp(bounceFromX, 0, v)), 0)
+            })
+            const springAnim = Adw.SpringAnimation.new(pop, 0, 1, Adw.SpringParams.new(0.7, 1, 380), springTarget)
+            springAnim.clamp = false
+            springAnim.connect('done', () => {
+                pop.set_offset(0, 0)
+            })
+            springAnim.play()
+            popoverSpringAnim = springAnim
+        } else {
+            pop.opacity = 0
+            pop.set_offset(0, -14)
+            pop.popup()
+
+            const springTarget = Adw.CallbackAnimationTarget.new((v: number) => {
+                pop.set_offset(0, Math.round(-14 * (1 - clamp(v, 0, 1))))
+            })
+            const springAnim = Adw.SpringAnimation.new(pop, 0, 1, Adw.SpringParams.new(0.72, 1, 360), springTarget)
+            springAnim.clamp = true
+            springAnim.play()
+            popoverSpringAnim = springAnim
+
+            const fadeInTarget = Adw.CallbackAnimationTarget.new((v: number) => {
+                pop.opacity = v
+            })
+            const fadeInAnim = Adw.TimedAnimation.new(pop, 0, 1, 200, fadeInTarget)
+            fadeInAnim.easing = Adw.Easing.EASE_OUT_QUAD
+            fadeInAnim.play()
+            popoverFadeAnim = fadeInAnim
+        }
+    }
 
     const queueBubbleDraw = () => {
         if (bubbleArea === null) {
@@ -312,11 +619,6 @@ function Workspaces() {
         }
 
         if (hasWorkspace === false) {
-            if (button !== undefined) {
-                button.set_has_tooltip(false)
-                button.set_tooltip_text(null)
-            }
-
             if (moreIndicator !== undefined) {
                 moreIndicator.set_visible(false)
             }
@@ -326,20 +628,8 @@ function Workspaces() {
             return
         }
 
-        const tooltipText = getWorkspaceOtherAppsTooltip(workspace)
-
-        if (button !== undefined) {
-            if (tooltipText === null) {
-                button.set_has_tooltip(false)
-                button.set_tooltip_text(null)
-            } else {
-                button.set_tooltip_text(tooltipText)
-                button.set_has_tooltip(true)
-            }
-        }
-
         if (moreIndicator !== undefined) {
-            moreIndicator.set_visible(tooltipText !== null)
+            moreIndicator.set_visible(workspace.clients.length > 1)
         }
 
         if (image === undefined) {
@@ -653,6 +943,10 @@ function Workspaces() {
         const clientRemovedHandler = hyprland.connect('client-removed', (address: string) => {
             unwatchClientByAddress(address)
             scheduleWorkspaceIconsSync()
+            const rev = sharedPopoverRevealers.get(address)
+            if (rev !== undefined) {
+                collapseAndCheckClose(rev)
+            }
         })
 
         const destroyHandler = area.connect('destroy', () => {
@@ -699,6 +993,26 @@ function Workspaces() {
                 bubbleAnimation = null
             }
 
+            if (hideTimerId !== null) {
+                GLib.source_remove(hideTimerId)
+                hideTimerId = null
+            }
+            if (popoverSpringAnim !== null) {
+                popoverSpringAnim.reset()
+                popoverSpringAnim = null
+            }
+            if (popoverFadeAnim !== null) {
+                popoverFadeAnim.reset()
+                popoverFadeAnim = null
+            }
+            if (sharedPopover !== null) {
+                sharedPopover.unparent()
+                sharedPopover = null
+            }
+            sharedPopoverBox = null
+            sharedPopoverRevealers.clear()
+            currentPopoverWorkspaceId = null
+
             area.disconnect(destroyHandler)
             bubbleArea = null
         })
@@ -713,10 +1027,58 @@ function Workspaces() {
         workspaceButtons.set(workspaceId, button)
         scheduleRecalculateAndSnap()
 
+        const buttonMotion = new Gtk.EventControllerMotion()
+        buttonMotion.connect('enter', () => {
+            cancelHidePopover()
+            showOrMoveSharedPopover(workspaceId)
+        })
+        buttonMotion.connect('leave', () => {
+            if (isDragging === false) {
+                scheduleHidePopover()
+            }
+        })
+        button.add_controller(buttonMotion)
+
+        const dropTarget = Gtk.DropTarget.new(GObject.TYPE_STRING, Gdk.DragAction.MOVE)
+        dropTarget.connect('enter', () => {
+            button.add_css_class('workspace-drop-highlight')
+            cancelHidePopover()
+            return Gdk.DragAction.MOVE
+        })
+        dropTarget.connect('leave', () => {
+            button.remove_css_class('workspace-drop-highlight')
+        })
+        dropTarget.connect('drop', (_self: Gtk.DropTarget, _value: unknown) => {
+            button.remove_css_class('workspace-drop-highlight')
+            const address = draggingAddress
+            if (address === null || address === '') {
+                return false
+            }
+            if (draggingFromWorkspace !== null && draggingFromWorkspace === workspaceId) {
+                return true
+            }
+            const client = hyprland.clients.find((c) => c.address === address)
+            if (client === undefined || client === null) {
+                return false
+            }
+            if (client.workspace !== null && client.workspace !== undefined && client.workspace.id === workspaceId) {
+                return true
+            }
+            hyprland.dispatch('movetoworkspacesilent', `${workspaceId},address:0x${address}`)
+            dragMoved = true
+            return true
+        })
+        button.add_controller(dropTarget)
+
         const destroyHandler = button.connect('destroy', () => {
             workspaceButtons.delete(workspaceId)
             workspaceMainClass.delete(workspaceId)
             workspaceSecondaryClass.delete(workspaceId)
+            if (currentPopoverWorkspaceId === workspaceId && sharedPopover !== null) {
+                sharedPopover.popdown()
+                sharedPopover.unparent()
+                currentPopoverWorkspaceId = null
+            }
             button.disconnect(destroyHandler)
         })
     }
