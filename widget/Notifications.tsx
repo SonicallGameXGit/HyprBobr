@@ -6,17 +6,181 @@ import Notifd from 'gi://AstalNotifd'
 import { notifications } from '../service/notifications'
 import { For } from 'gnim'
 
-function resolveAppIcon(appIcon: string, desktopEntry: string): { isPath: boolean, value: string } | null {
-    if (appIcon !== '' && appIcon !== null && appIcon !== undefined) {
-        if (appIcon.startsWith('/')) {
-            return { isPath: true, value: appIcon }
-        }
-        return { isPath: false, value: appIcon }
+function pathFromFileUri(uri: string): string | null {
+    if (uri.startsWith('file://') === false) {
+        return null
     }
-    const entryId = desktopEntry !== '' && desktopEntry !== null && desktopEntry !== undefined
-        ? desktopEntry
-        : null
-    if (entryId !== null) {
+
+    try {
+        return Gio.File.new_for_uri(uri).get_path()
+    } catch {
+        return null
+    }
+}
+
+function existingPathFromValue(value: string): string | null {
+    const trimmed = value.trim()
+    if (trimmed === '') {
+        return null
+    }
+
+    if (trimmed.startsWith('/')) {
+        return GLib.file_test(trimmed, GLib.FileTest.EXISTS) ? trimmed : null
+    }
+
+    const uriPath = pathFromFileUri(trimmed)
+    if (uriPath !== null && GLib.file_test(uriPath, GLib.FileTest.EXISTS)) {
+        return uriPath
+    }
+
+    return null
+}
+
+function fileIconIfExists(path: string): Gio.Icon | null {
+    const existingPath = existingPathFromValue(path)
+    if (existingPath === null) {
+        return null
+    }
+    return Gio.FileIcon.new(Gio.File.new_for_path(existingPath))
+}
+
+function maybeThemedIcon(iconName: string): Gio.Icon | null {
+    if (iconName === '') {
+        return null
+    }
+
+    return Gio.ThemedIcon.new(iconName)
+}
+
+function iconFromNotifySendValue(rawIcon: string): Gio.Icon | null {
+    const value = rawIcon.trim()
+    if (value === '') {
+        return null
+    }
+
+    const candidates = value.split(',').map((v: string) => v.trim()).filter((v: string) => v !== '')
+
+    for (const candidate of candidates) {
+        if (candidate.startsWith('/')) {
+            const byPath = fileIconIfExists(candidate)
+            if (byPath !== null) {
+                return byPath
+            }
+            continue
+        }
+
+        if (candidate.startsWith('file://')) {
+            const byUri = Gio.File.new_for_uri(candidate)
+            const byUriPath = byUri.get_path()
+            if (byUriPath !== null) {
+                const byPath = fileIconIfExists(byUriPath)
+                if (byPath !== null) {
+                    return byPath
+                }
+            }
+            continue
+        }
+
+        const directName = maybeThemedIcon(candidate)
+        if (directName !== null) {
+            return directName
+        }
+
+        const stripped = candidate.replace(/\.(png|svg|xpm|jpg|jpeg|webp)$/i, '')
+        if (stripped !== candidate) {
+            const strippedName = maybeThemedIcon(stripped)
+            if (strippedName !== null) {
+                return strippedName
+            }
+        }
+
+        try {
+            const asIcon = Gio.Icon.new_for_string(candidate)
+            if (asIcon !== null) {
+                if (asIcon instanceof Gio.FileIcon) {
+                    const path = asIcon.file.get_path()
+                    if (path !== null) {
+                        const validFileIcon = fileIconIfExists(path)
+                        if (validFileIcon !== null) {
+                            return validFileIcon
+                        }
+                    }
+                } else {
+                    return asIcon
+                }
+            }
+        } catch {
+            // Continue trying other candidates
+        }
+    }
+
+    return null
+}
+
+function firstNonEmpty(values: (string | null | undefined)[]): string {
+    for (const value of values) {
+        if (value !== null && value !== undefined) {
+            const trimmed = value.trim()
+            if (trimmed !== '') {
+                return trimmed
+            }
+        }
+    }
+    return ''
+}
+
+function resolveAppIcon(notification: Notifd.Notification): Gio.Icon {
+    const propAppIcon = notification.appIcon
+    const getterAppIcon = notification.get_app_icon()
+    const propDesktopEntry = notification.desktopEntry
+    const getterDesktopEntry = notification.get_desktop_entry()
+    const propImage = notification.image
+    const getterImage = notification.get_image()
+    const hintImagePath = notification.get_str_hint('image-path')
+    const hintImagePathUnderscore = notification.get_str_hint('image_path')
+    const hintIconData = notification.get_str_hint('icon_data')
+
+    const appIconValue = firstNonEmpty([propAppIcon, getterAppIcon])
+    const imageValue = firstNonEmpty([propImage, getterImage, hintImagePath, hintImagePathUnderscore])
+    const entryId = firstNonEmpty([propDesktopEntry, getterDesktopEntry])
+
+    console.log(
+        '[notifications] icon inputs',
+        {
+            id: notification.id,
+            appName: notification.appName,
+            summary: notification.summary,
+            appIconProp: propAppIcon,
+            appIconGetter: getterAppIcon,
+            desktopEntryProp: propDesktopEntry,
+            desktopEntryGetter: getterDesktopEntry,
+            imageProp: propImage,
+            imageGetter: getterImage,
+            imagePathHint: hintImagePath,
+            imagePathUnderscoreHint: hintImagePathUnderscore,
+            iconDataHint: hintIconData,
+        },
+    )
+
+    if (appIconValue !== '') {
+        const byNotifySendIcon = iconFromNotifySendValue(appIconValue)
+        if (byNotifySendIcon !== null) {
+            console.log(`[notifications] icon resolved from appIcon="${appIconValue}"`)
+            return byNotifySendIcon
+        }
+
+        console.log(`[notifications] appIcon provided but not resolved: "${appIconValue}"`)
+    }
+
+    if (appIconValue === '' && imageValue !== '' && existingPathFromValue(imageValue) === null) {
+        const byImageIcon = iconFromNotifySendValue(imageValue)
+        if (byImageIcon !== null) {
+            console.log(`[notifications] icon resolved from image fallback="${imageValue}"`)
+            return byImageIcon
+        }
+    }
+
+    if (entryId !== '') {
         const candidates = [
             entryId,
             entryId + '.desktop',
@@ -30,20 +194,39 @@ function resolveAppIcon(appIcon: string, desktopEntry: string): { isPath: boolea
                 if (icon !== null) {
                     if (icon instanceof Gio.ThemedIcon) {
                         const names = icon.get_names()
-                        if (names.length > 0) {
-                            return { isPath: false, value: names[0] }
+                        for (const name of names) {
+                            const byName = maybeThemedIcon(name)
+                            if (byName !== null) {
+                                console.log(`[notifications] icon resolved from desktopEntry="${entryId}" themed="${name}"`)
+                                return byName
+                            }
                         }
                     } else if (icon instanceof Gio.FileIcon) {
                         const path = icon.file.get_path()
                         if (path !== null) {
-                            return { isPath: true, value: path }
+                            const byPath = fileIconIfExists(path)
+                            if (byPath !== null) {
+                                console.log(`[notifications] icon resolved from desktopEntry="${entryId}" file="${path}"`)
+                                return byPath
+                            }
                         }
+                    } else {
+                        console.log(`[notifications] icon resolved from desktopEntry="${entryId}" generic Gio.Icon`)
+                        return icon
                     }
                 }
             }
         }
+
+        const entryAsIcon = maybeThemedIcon(entryId)
+        if (entryAsIcon !== null) {
+            console.log(`[notifications] icon resolved from desktopEntry as iconName="${entryId}"`)
+            return entryAsIcon
+        }
     }
-    return null
+
+    console.log('[notifications] falling back to default icon "application-x-executable"')
+    return Gio.ThemedIcon.new('application-x-executable')
 }
 
 function htmlToPango(text: string): string {
@@ -74,17 +257,42 @@ function htmlToPango(text: string): string {
     s = s.replace(/<\/a>/gi, '')
     // Strip img tags
     s = s.replace(/<img\b[^>]*\/?>/gi, '')
-    // Strip attributes from supported Pango tags, strip unsupported tags entirely
+
+    // Preserve only a strict allowlist of tags and escape all other angle-bracket content.
+    // This prevents pseudo-tags like <mail_id> from breaking GTK markup parsing.
     const allowed = new Set(['b', 'big', 'i', 's', 'sub', 'sup', 'small', 'tt', 'u'])
+    const placeholders: string[] = []
     s = s.replace(/<(\/?)([a-zA-Z][a-zA-Z0-9]*)(\s[^>]*)?\s*>/g, (_, slash, tag) => {
         const t = tag.toLowerCase()
-        return allowed.has(t) ? (slash !== '' ? `</${t}>` : `<${t}>`) : ''
+        if (!allowed.has(t)) {
+            return _
+        }
+        const normalized = slash !== '' ? `</${t}>` : `<${t}>`
+        const token = `__PANGO_TAG_${placeholders.length}__`
+        placeholders.push(normalized)
+        return token
     })
+
+    s = s.replace(/&(?!(amp|lt|gt|quot|apos|#[0-9]+|#x[0-9a-fA-F]+);)/gi, '&amp;')
+    s = s.replace(/</g, '&lt;')
+    s = s.replace(/>/g, '&gt;')
+
+    for (let i = 0; i < placeholders.length; i++) {
+        s = s.replace(`__PANGO_TAG_${i}__`, placeholders[i])
+    }
+
     return s.trim()
 }
 function NotificationWidget(notification: Notifd.Notification) {
-    const resolvedIcon = resolveAppIcon(notification.appIcon, notification.desktopEntry)
-    const hasImage = notification.image !== '' && notification.image !== null && notification.image !== undefined
+    const resolvedIcon = resolveAppIcon(notification)
+    const imageValue = firstNonEmpty([
+        notification.image,
+        notification.get_image(),
+        notification.get_str_hint('image-path'),
+        notification.get_str_hint('image_path'),
+    ])
+    const attachmentPath = existingPathFromValue(imageValue)
+    const hasImage = attachmentPath !== null
     const hasBody = notification.body !== '' && notification.body !== null && notification.body !== undefined
     const actions = notification.actions
     const hasActions = actions !== null && actions !== undefined && actions.length > 0
@@ -101,8 +309,7 @@ function NotificationWidget(notification: Notifd.Notification) {
             >
                 <box orientation={Gtk.Orientation.VERTICAL}>
                 <box class="notification-titlebar" hexpand={true} spacing={6}>
-                    {resolvedIcon !== null && !resolvedIcon.isPath && <image class="notification-app-icon" iconName={resolvedIcon.value} pixelSize={16} />}
-                    {resolvedIcon !== null && resolvedIcon.isPath && <image class="notification-app-icon" file={resolvedIcon.value} pixelSize={16} />}
+                    <image class="notification-app-icon" gicon={resolvedIcon} pixelSize={16} />
                     <label
                         class="notification-app-name"
                         label={notification.appName || 'Unknown'}
@@ -137,7 +344,7 @@ function NotificationWidget(notification: Notifd.Notification) {
                 {hasImage && (
                     <image
                         class="notification-image"
-                        file={notification.image}
+                        file={attachmentPath}
                         pixelSize={64}
                         valign={Gtk.Align.CENTER}
                     />
